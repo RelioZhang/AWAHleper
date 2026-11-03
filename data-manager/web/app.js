@@ -37,6 +37,7 @@ const state = {
   conds: [],
   editCount: 0,
   editedCells: new Set(),
+  picked: new Set(),          // 批量整理勾选的测量组编号
   vis: Object.fromEntries(METRICS.map(m => [m.key, true])),
   cache: new Map(),
   w: 0, h: 0,
@@ -392,6 +393,28 @@ function renderTable(emptyMsg) {
   tblEl.style.setProperty('--idx-w', firstW + 'px');
   requestAnimationFrame(updateHScrollTip);
 
+  // 整理模式：最前面加一列勾选框
+  if (isEditMode()) {
+    const th0 = document.createElement('th');
+    th0.className = 'pickcol';
+    const all = document.createElement('input');
+    all.type = 'checkbox';
+    all.title = '全选 / 取消全选（按测量组）';
+    const shown = visibleRows();
+    all.checked = shown.length > 0 && shown.every(r => state.picked.has(groupIdOf(r[1])));
+    all.addEventListener('click', ev => ev.stopPropagation());
+    all.addEventListener('change', () => {
+      shown.forEach(r => {
+        const g = groupIdOf(r[1]);
+        if (all.checked) state.picked.add(g); else state.picked.delete(g);
+      });
+      renderTable();
+      updateBatchUI();
+    });
+    th0.appendChild(all);
+    theadRow.appendChild(th0);
+  }
+
   state.headers.forEach(([label, w], ci) => {
     const th = document.createElement('th');
     const width = colWidth(state.cat, label, w);
@@ -434,6 +457,31 @@ function renderTable(emptyMsg) {
     tr.dataset.i = idx;
     tr.dataset.file = row[1];
     const fieldMap = state.fields[idx] || {};
+    if (isEditMode()) {
+      const gid = groupIdOf(row[1]);
+      const td0 = document.createElement('td');
+      td0.className = 'pickcell';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = state.picked.has(gid);
+      cb.addEventListener('click', ev => ev.stopPropagation());
+      cb.addEventListener('change', () => {
+        if (cb.checked) state.picked.add(gid); else state.picked.delete(gid);
+        // 同组其他行同步勾选状态
+        $$('#tbl tbody tr').forEach(o => {
+          if (groupIdOf(o.dataset.file) === gid) {
+            o.classList.toggle('picked', cb.checked);
+            const c = o.querySelector('.pickcell input');
+            if (c) c.checked = cb.checked;
+          }
+        });
+        tr.classList.toggle('picked', cb.checked);
+        updateBatchUI();
+      });
+      td0.appendChild(cb);
+      tr.appendChild(td0);
+      if (state.picked.has(gid)) tr.classList.add('picked');
+    }
     row.forEach((cell, ci) => {
       const td = document.createElement('td');
       const txt = String(cell ?? '');
@@ -444,12 +492,25 @@ function renderTable(emptyMsg) {
       td.title = txt;
 
       const f = fieldMap[ci];
-      // 原始数据视图只读：不挂编辑事件，只在有整理结果时标出「已整理」
       if (f) {
         const isDirty = (state.editedCells || new Set()).has(`${idx}:${ci}`);
-        if (isDirty) {
-          td.classList.add('modified');
-          td.title = `${txt}　（已在数据整理中修改）`;
+        if (isDirty) td.classList.add('modified');
+        // 只有整理模式才允许就地编辑；原始数据保持只读
+        if (isEditMode()) {
+          td.classList.add('editable');
+          if (f.one === 'group') td.classList.add('grp');
+          td.title = f.one === 'group'
+            ? `${txt}　（双击修改，同步到同编号的 1/3OCT·OCT·STA·NUM 文件）`
+            : `${txt}　（双击或直接输入可修改）`;
+          td.addEventListener('click', ev => {
+            if (td.querySelector('input')) ev.stopPropagation();
+          });
+          td.addEventListener('dblclick', ev => {
+            ev.stopPropagation();
+            beginEdit(td, idx, ci, f, txt);
+          });
+        } else if (isDirty) {
+          td.title = `${txt}　（已在数据整理中修改；原始数据只读）`;
         }
       }
       tr.appendChild(td);
@@ -1439,294 +1500,232 @@ $('.tablewrap').addEventListener('scroll', () => {
 }, { passive: true });
 
 
-/* ============================================================ 数据整理 */
-const org = {
-  groups: [],
-  summary: {},
-  picked: new Set(),      // 选中的 gid
-};
 
-async function loadGroups() {
-  try {
-    const j = await api('/api/groups');
-    org.groups = j.groups || [];
-    org.summary = j.summary || {};
-    // 清掉已不存在的选择
-    const alive = new Set(org.groups.map(g => g.gid));
-    [...org.picked].forEach(g => { if (!alive.has(g)) org.picked.delete(g); });
-    renderOrg();
-  } catch (e) {
-    toast('读取分组失败：' + e.message, 3000);
-  }
+/* ============================================================ 模块模式 */
+/* 两个模块共用同一套界面，唯一差别是「能不能改」 */
+function isEditMode() {
+  return document.body.classList.contains('view-org');
 }
 
-function renderOrg() {
-  const gs = org.groups;
-  const s = org.summary;
+function switchModule(mod) {
+  $$('.mod').forEach(b => b.classList.toggle('active', b.dataset.mod === mod));
+  const edit = mod === 'organize';
+  document.body.classList.toggle('view-org', edit);
 
-  // 左栏统计
-  const dupTxt = s.duplicates
-    ? `<span class="warn">${s.duplicates} 个点名重复</span>`
-    : '<span class="ok">点名无重复</span>';
-  $('#orgStats').innerHTML =
-    `共 <b>${s.groups || 0}</b> 组 · <b>${s.files || 0}</b> 个文件<br>` +
-    `已命名 <b>${(s.groups || 0) - (s.unnamed || 0)}</b> / 未命名 <b class="${s.unnamed ? 'warn' : ''}">${s.unnamed || 0}</b><br>` +
-    dupTxt;
+  $('#tbBadge').textContent = edit ? '数据整理' : '原始数据';
+  const st = $('#sideTag');
+  if (st) {
+    st.textContent = edit ? '可整理' : '只读';
+    st.classList.toggle('org', edit);
+  }
+  const bar = $('#modeBar');
+  bar.classList.toggle('editable', edit);
+  $('#mbIcon').innerHTML = edit
+    ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M11.5 2.5l2 2-8 8H3.5v-2l8-8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>'
+    : '<svg viewBox="0 0 16 16" width="12" height="12"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+  $('#mbText').textContent = edit
+    ? '数据整理 · 可修改测点名、日期、时间与频带值；原始 AWA 文件始终不被改写'
+    : '原始数据只读 · 可查看、排序、筛选与导出；如需修改请切换到【数据整理】';
+  $('#mbActions').innerHTML = '';
 
-  // 左栏分组列表
-  const ul = $('#grpList');
-  ul.innerHTML = '';
-  gs.forEach(g => {
-    const li = document.createElement('li');
-    li.dataset.gid = g.gid;
-    const unnamed = !g.point || /^DATA_\d+$/i.test(g.point);
-    if (g.edited) li.classList.add('edited');
-    if (unnamed) li.classList.add('unnamed');
-    if (org.picked.has(g.gid)) li.classList.add('sel-grp');
+  // 缩放一下让布局重算（表格多了/少了勾选列）
+  if (!edit) {
+    state.picked.clear();
+    $('#batchDrawer').hidden = true;
+    $('#btnBatch').style.display = '';
+  } else {
+    $('#btnBatch').style.display = '';
+  }
+  renderTable();
+  updateBatchUI();
+}
 
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.className = 'gcheck';
-    cb.checked = org.picked.has(g.gid);
-    cb.addEventListener('change', () => {
-      if (cb.checked) org.picked.add(g.gid); else org.picked.delete(g.gid);
-      renderOrg();
-    });
-    cb.addEventListener('click', ev => ev.stopPropagation());
+/* ============================================================ 批量整理 */
+function updateBatchUI() {
+  const n = state.picked.size;
+  const btn = $('#btnBatch');
+  if (btn) {
+    btn.querySelector('span').textContent = n ? `批量整理 (${n})` : '批量整理';
+    btn.classList.toggle('primary', n > 0);
+  }
+  const sub = $('#bdSub');
+  if (sub) {
+    sub.textContent = n
+      ? `已选 ${n} 个测量组 · 将同步到这些组内的全部文件`
+      : '勾选下方行，或使用右侧快捷选择';
+  }
+  updateBdPreview();
+}
 
-    const info = document.createElement('div');
-    info.className = 'ginfo';
-    const nm = document.createElement('div');
-    nm.className = 'gname';
-    nm.textContent = g.point || '（未命名）';
-    nm.title = g.point || '';
-    const meta = document.createElement('div');
-    meta.className = 'gmeta';
-    meta.textContent = `#${g.gid} · ${(g.date || '').slice(5)} ${g.time || ''}`;
-    info.appendChild(nm);
-    info.appendChild(meta);
-
-    li.appendChild(cb);
-    li.appendChild(info);
-    li.addEventListener('click', () => {
-      cb.checked = !cb.checked;
-      if (cb.checked) org.picked.add(g.gid); else org.picked.delete(g.gid);
-      renderOrg();
-    });
-    ul.appendChild(li);
+function allGroupsInView() {
+  const seen = new Map();
+  visibleRows().forEach(r => {
+    const g = groupIdOf(r[1]);
+    if (!seen.has(g)) seen.set(g, r[1]);
   });
-
-  // 右侧表格
-  const tbody = $('#orgTbl tbody');
-  tbody.innerHTML = '';
-  const frag = document.createDocumentFragment();
-  gs.forEach(g => {
-    const tr = document.createElement('tr');
-    if (org.picked.has(g.gid)) tr.classList.add('picked');
-    const unnamed = !g.point || /^DATA_\d+$/i.test(g.point);
-
-    const tdCb = document.createElement('td');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = org.picked.has(g.gid);
-    cb.addEventListener('change', () => {
-      if (cb.checked) org.picked.add(g.gid); else org.picked.delete(g.gid);
-      renderOrg();
-    });
-    tdCb.appendChild(cb);
-    tr.appendChild(tdCb);
-
-    const cells = [
-      g.gid,
-      g.point || '—',
-      g.date || '—',
-      g.time || '—',
-      g.splA == null ? '—' : Number(g.splA).toFixed(1),
-      g.splZ == null ? '—' : Number(g.splZ).toFixed(1),
-    ];
-    cells.forEach((v, i) => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      if (i >= 4) td.className = 'num';
-      if (i === 1) td.title = v;
-      tr.appendChild(td);
-    });
-
-    const tdF = document.createElement('td');
-    tdF.className = 'filecell';
-    tdF.textContent = `${g.files.length} 个`;
-    tdF.title = g.files.join('\n');
-    tr.appendChild(tdF);
-
-    const tdS = document.createElement('td');
-    const chip = document.createElement('span');
-    if (g.edited) { chip.className = 'status-chip edited'; chip.textContent = '已整理'; }
-    else if (unnamed) { chip.className = 'status-chip unnamed'; chip.textContent = '待命名'; }
-    else { chip.className = 'status-chip raw'; chip.textContent = '原始'; }
-    tdS.appendChild(chip);
-    tr.appendChild(tdS);
-
-    tr.addEventListener('click', ev => {
-      if (ev.target.type === 'checkbox') return;
-      if (org.picked.has(g.gid)) org.picked.delete(g.gid); else org.picked.add(g.gid);
-      renderOrg();
-    });
-    frag.appendChild(tr);
-  });
-  tbody.appendChild(frag);
-
-  const empty = $('#orgEmpty');
-  empty.hidden = gs.length > 0;
-  empty.textContent = '没有读取到分组数据，请先在【数据管理】中读取数据目录';
-
-  $('#orgSelCount').textContent = `${org.picked.size} 组`;
-  $('#orgEditCount').textContent = `${s.edited || 0} 处`;
-  $('#orgPath').textContent = state.dir ? '数据目录：' + state.dir : '';
-  updateOrgTplPreview();
+  return seen;
 }
 
 function pickedFiles() {
-  const set = new Set(org.picked);
   const out = [];
-  org.groups.forEach(g => { if (set.has(g.gid)) out.push(g.files[0]); });
+  const seen = new Set();
+  visibleRows().forEach(r => {
+    const g = groupIdOf(r[1]);
+    if (state.picked.has(g) && !seen.has(g)) { seen.add(g); out.push(r[1]); }
+  });
   return out;
 }
 
-function selectGroups(pred, label) {
-  org.picked.clear();
-  org.groups.forEach(g => { if (pred(g)) org.picked.add(g.gid); });
-  renderOrg();
-  if (label) toast(`已选中 ${org.picked.size} 组（${label}）`, 1800);
-}
-
-/* 模板预览：取前 3 个选中组演示效果 */
 function tplValue(tpl, gid, idx, total) {
-  return String(tpl).replace(/\{gid\}/g, gid).replace(/\{i\}/g, idx).replace(/\{n\}/g, total);
+  return String(tpl).replace(/\{gid\}/g, gid)
+                    .replace(/\{i\}/g, idx)
+                    .replace(/\{n\}/g, total);
 }
 
-function updateOrgTplPreview() {
-  const tpl = ($('#orgNameTpl').value || '').trim();
-  const sel = org.groups.filter(g => org.picked.has(g.gid));
-  const box = $('#orgNamePreview');
-  if (!tpl) { box.textContent = '预览：—'; box.classList.remove('has'); return; }
-  if (!sel.length) { box.textContent = '预览：请先选中分组'; box.classList.remove('has'); return; }
-  const demo = sel.slice(0, 3).map((g, i) => tplValue(tpl, g.gid, i + 1, sel.length));
-  box.textContent = '预览：' + demo.join('，') + (sel.length > 3 ? ` …（共 ${sel.length} 组）` : '');
+function updateBdPreview() {
+  const box = $('#bdPreview');
+  if (!box) return;
+  const tpl = ($('#bdNameTpl')?.value || '').trim();
+  const files = pickedFiles();
+  if (!files.length) {
+    box.textContent = tpl ? '预览：请先勾选数据行' : '预览：—';
+    box.classList.remove('has');
+    return;
+  }
+  const gids = [...new Set(files.map(f => groupIdOf(f)))];
+  if (!tpl) {
+    box.textContent = `已选 ${gids.length} 组 / ${files.length} 行`;
+    box.classList.remove('has');
+    return;
+  }
+  const demo = gids.slice(0, 3).map((g, i) => tplValue(tpl, g, i + 1, gids.length));
+  box.textContent = '预览：' + demo.join('，') +
+    (gids.length > 3 ? ` …（共 ${gids.length} 组）` : '');
   box.classList.add('has');
-  return demo;
 }
 
 async function applyBatch(path, value, label) {
   const files = pickedFiles();
-  if (!files.length) return toast('请先在左侧选中要整理的分组', 2600);
-  if (value == null || String(value).trim() === '') return toast('请填写内容');
+  if (!files.length) return toast('请先勾选要整理的数据行', 2600);
+  if (value == null || String(value).trim() === '') return toast('请填写要应用的' + label);
 
-  const btn = event && event.target;
-  if (btn) btn.disabled = true;
   try {
     const j = await postJSON('/api/batch', { files, path, value, group: true });
+    // 本地同步显示
+    const shown = path === 'point' ? null : String(value);
+    const gids = [...new Set(files.map(f => groupIdOf(f)))];
+    const tplUsed = path === 'point' ? String(value) : null;
+    state.rows.forEach(r => {
+      const gi = gids.indexOf(groupIdOf(r[1]));
+      if (gi < 0) return;
+      if (path === 'point') {
+        const col = state.headers.findIndex(h => h[0] === '测点名');
+        if (col >= 0) r[col] = tplValue(tplUsed, groupIdOf(r[1]), gi + 1, gids.length);
+      } else if (path === 'date') {
+        const col = state.headers.findIndex(h => h[0] === '测试日期');
+        if (col >= 0) r[col] = shown;
+      } else if (path === 'time') {
+        const col = state.headers.findIndex(h => h[0] === '测试时间');
+        if (col >= 0) r[col] = shown;
+      }
+    });
     state.cache.clear();
-    toast(`${label}：已更新 ${j.groups} 组 / ${j.written} 个文件（源文件未改动）`, 2600);
-    await loadGroups();
+    state.detail = null;
+    state.editCount = Math.max(state.editCount || 0, j.edits || 0);
+    updateEditBadge();
+    renderTable();
+    if (state.selectedFile) await loadDetail(state.selectedFile);
+    toast(`${label}：已更新 ${j.groups} 组 / ${j.written} 个文件（原始 AWA 未改动）`, 2800);
   } catch (e) {
     toast('应用失败：' + e.message, 3200);
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 
-/* 事件绑定 */
-$('#orgSelAll').addEventListener('click', () =>
-  selectGroups(() => true, '全部'));
-$('#orgSelNone').addEventListener('click', () => {
-  org.picked.clear(); renderOrg();
-});
-$('#orgSelUnnamed').addEventListener('click', () =>
-  selectGroups(g => !g.point || /^DATA_\d+$/i.test(g.point), '未命名'));
-$('#orgSelDup').addEventListener('click', () => {
+/* 快捷选择 */
+function selectBy(pred, label) {
+  state.picked.clear();
+  visibleRows().forEach(r => {
+    const g = groupIdOf(r[1]);
+    if (pred(r, g)) state.picked.add(g);
+  });
+  renderTable();
+  updateBatchUI();
+  toast(`已选中 ${state.picked.size} 组（${label}）`, 1800);
+}
+
+function dupPointSet() {
   const cnt = {};
-  org.groups.forEach(g => { if (g.point) cnt[g.point] = (cnt[g.point] || 0) + 1; });
-  selectGroups(g => cnt[g.point] > 1, '重复点名');
+  const col = state.headers.findIndex(h => h[0] === '测点名');
+  if (col < 0) return new Set();
+  state.rows.forEach(r => { if (r[col]) cnt[r[col]] = (cnt[r[col]] || 0) + 1; });
+  return new Set(Object.keys(cnt).filter(k => cnt[k] > 1));
+}
+
+$('#btnBatch').addEventListener('click', () => {
+  if (!isEditMode()) {
+    toast('原始数据只读，请切换到【数据整理】后再批量操作', 2800);
+    return;
+  }
+  const d = $('#batchDrawer');
+  d.hidden = !d.hidden;
+  updateBatchUI();
 });
 
-$('#orgHeadCheck').addEventListener('change', ev => {
-  if (ev.target.checked) org.groups.forEach(g => org.picked.add(g.gid));
-  else org.picked.clear();
-  renderOrg();
+$('#bdClose').addEventListener('click', () => { $('#batchDrawer').hidden = true; });
+
+$('#bdSelAll').addEventListener('click', () => selectBy(() => true, '全部'));
+$('#bdSelNone').addEventListener('click', () => {
+  state.picked.clear(); renderTable(); updateBatchUI();
+});
+$('#bdSelUnnamed').addEventListener('click', () => {
+  const col = state.headers.findIndex(h => h[0] === '测点名');
+  selectBy(r => !r[col] || /^DATA_\d+$/i.test(r[col]), '未命名');
+});
+$('#bdSelDup').addEventListener('click', () => {
+  const col = state.headers.findIndex(h => h[0] === '测点名');
+  const dup = dupPointSet();
+  selectBy(r => dup.has(r[col]), '重复点名');
 });
 
-$('#orgNameTpl').addEventListener('input', updateOrgTplPreview);
-$('#orgApplyName').addEventListener('click', ev => {
-  const tpl = ($('#orgNameTpl').value || '').trim();
+$('#bdNameTpl').addEventListener('input', updateBdPreview);
+$('#bdApplyName').addEventListener('click', () => {
+  const tpl = ($('#bdNameTpl').value || '').trim();
   if (!tpl) return toast('请填写命名规则，例如 三层-会议室-{i}');
   applyBatch('point', tpl, '批量命名');
 });
+$('#bdApplyDate').addEventListener('click', () =>
+  applyBatch('date', $('#bdDate').value, '批量改日期'));
+$('#bdApplyTime').addEventListener('click', () =>
+  applyBatch('time', $('#bdTime').value, '批量改测试时间'));
 
-$('#orgApplyDate').addEventListener('click', ev => {
-  const v = $('#orgDate').value;
-  applyBatch('date', v, '批量改日期');
-});
-$('#orgDate').addEventListener('change', () => {
-  const v = $('#orgDate').value;
-  const n = org.picked.size;
-  const box = $('#orgDatePreview');
-  box.textContent = v ? `将把 ${n} 组改为 ${v}` : '预览：—';
-  box.classList.toggle('has', !!v && n > 0);
-});
-
-$('#orgApplyTime').addEventListener('click', ev => {
-  const v = $('#orgTime').value;
-  applyBatch('time', v, '批量改测试时间');
-});
-$('#orgTime').addEventListener('change', () => {
-  const v = $('#orgTime').value;
-  const n = org.picked.size;
-  const box = $('#orgTimePreview');
-  box.textContent = v ? `将把 ${n} 组改为 ${v}` : '预览：—';
-  box.classList.toggle('has', !!v && n > 0);
-});
-
-$('#orgExport').addEventListener('click', () => {
+$('#bdExport').addEventListener('click', () => {
   const files = pickedFiles();
-  if (!files.length) return toast('请先选中要导出的分组', 2400);
-  const url = '/api/export?cat=13OCT&files=' + encodeURIComponent(files.join(','));
+  if (!files.length) return toast('请先勾选要导出的数据行', 2400);
+  const url = '/api/export?cat=' + encodeURIComponent(state.cat) +
+              '&files=' + encodeURIComponent(files.join(','));
   const a = document.createElement('a');
-  a.href = url;
-  a.download = '';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  toast(`正在导出 ${files.length} 组（含整理后的值，源文件未改动）`, 2600);
+  a.href = url; a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast(`正在导出 ${files.length} 行（含整理后的值）`, 2400);
 });
 
-$('#orgRevertAll').addEventListener('click', async () => {
-  if (!confirm('确定撤销本目录全部整理结果吗？\n源 AWA 文件始终不受影响。')) return;
+$('#bdRevert').addEventListener('click', async () => {
+  if (!confirm('确定撤销本目录全部整理结果吗？\n原始 AWA 文件始终不受影响。')) return;
   try {
     const j = await postJSON('/api/revert', {});
     state.cache.clear();
+    state.detail = null;
+    state.editCount = 0;
+    state.editedCells = new Set();
+    updateEditBadge();
+    const data = await api('/api/table?cat=' + encodeURIComponent(state.cat));
+    state.rows = data.rows;
+    state.fields = data.fields || [];
+    renderTable();
+    if (state.selectedFile) await loadDetail(state.selectedFile);
     toast(`已撤销 ${j.reverted} 个文件的整理`, 2200);
-    await loadGroups();
-  } catch (e) {
-    toast('撤销失败：' + e.message, 3000);
-  }
+  } catch (e) { toast('撤销失败：' + e.message, 3000); }
 });
-
-/* 模块切换 */
-function switchModule(mod) {
-  $$('.mod').forEach(b => b.classList.toggle('active', b.dataset.mod === mod));
-  const isOrg = mod === 'organize';
-  document.body.classList.toggle('view-org', isOrg);
-  $('#viewOrganize').hidden = !isOrg;
-  $('#viewRaw').hidden = isOrg;
-  $('#filterPanel').hidden = true;
-
-  if (isOrg) {
-    loadGroups();
-    $('#tbBadge').textContent = '数据整理';
-  } else {
-    $('#tbBadge').textContent = '原始数据';
-  }
-}
 
 /* ============================================================ 启动 */
 (function boot() {
