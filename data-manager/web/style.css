@@ -295,7 +295,8 @@ input{font-family:inherit;}
   background:#fff;
 }
 table{
-  width:100%;
+  width:max-content;
+  min-width:100%;
   border-collapse:separate;
   border-spacing:0;
   font-size:12.5px;
@@ -776,4 +777,137 @@ tbody td.editable.grp{
 }
 tbody td.editable.grp:hover{
   background-image:radial-gradient(circle at calc(100% - 5px) 5px, #2b7fc4 2.4px, transparent 2.7px) !important;
+}
+
+/* ================= 横向滚动与列宽 ================= */
+/* 列宽可拖：表头右侧 6px 为拖拽热区 */
+thead th{position:sticky;top:0;overflow:visible;}
+thead th .th-inner{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  padding-right:6px;
+}
+thead th .colgrip{
+  position:absolute;
+  top:0;
+  right:-3px;
+  width:7px;
+  height:100%;
+  cursor:col-resize;
+  z-index:5;
+}
+thead th .colgrip::after{
+  content:"";
+  position:absolute;
+  left:3px;
+  top:3px;
+  bottom:3px;
+  width:1px;
+  background:transparent;
+}
+thead th:hover .colgrip::after{background:#c3d3e2;}
+thead th .colgrip:hover::after{background:var(--blue);width:2px;}
+body.col-resizing{cursor:col-resize !important;user-select:none;}
+
+/* 横向滚动条更明显，并在右下角给出提示 */
+.tablewrap{scrollbar-color:#b9cadb #f2f6fa;}
+.tablewrap::-webkit-scrollbar{height:12px;width:12px;}
+.tablewrap::-webkit-scrollbar-thumb{
+  background:#b9cadb;
+  border-radius:6px;
+  border:2px solid #f7fafd;
+}
+.tablewrap::-webkit-scrollbar-thumb:hover{background:#93b0c9;}
+.tablewrap::-webkit-scrollbar-button:single-button{
+  background:#e8f1f9;
+  height:12px;
+  width:12px;
+  border:1px solid #d3dde8;
+}
+.hscroll-tip{
+  position:absolute;
+  right:14px;
+  bottom:8px;
+  padding:3px 9px;
+  border-radius:11px;
+  background:rgba(43,127,196,.9);
+  color:#fff;
+  font-size:11px;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity .25s;
+  z-index:6;
+  white-space:nowrap;
+}
+.hscroll-tip.show{opacity:1;}
+
+/* ================= 曲线区折叠 ================= */
+.chart-toggle{
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  gap:3px;
+  align-self:center;
+  height:22px;
+  margin:0 2px 0 8px;
+  padding:0 7px;
+  border:1px solid #cfdce9;
+  border-radius:3px;
+  background:linear-gradient(180deg,#fff,#f1f7fc);
+  color:#3a6b91;
+  font-size:11.5px;
+  white-space:nowrap;
+}
+.chart-toggle:hover{border-color:#9dc3e3;color:var(--blue-deep);}
+.chart-toggle svg{transition:transform .18s ease;}
+body.chart-collapsed .chart-toggle svg{transform:rotate(-90deg);}
+body.chart-collapsed .chart-toggle{background:#e8f2fb;border-color:#a9cbe8;color:var(--blue-deep);font-weight:700;}
+
+/* 折叠后：曲线条与图表全部收起，表格占满剩余高度 */
+body.chart-collapsed .curvebar{display:none !important;}
+body.chart-collapsed .chartwrap{display:none !important;}
+body.chart-collapsed .tablewrap{
+  flex:1 1 auto;
+  max-height:none;
+}
+
+/* 折叠状态在曲线条上的展开提示（贴在表格底边） */
+.chart-expand-hint{
+  display:none;
+  align-items:center;
+  gap:6px;
+  height:22px;
+  padding:0 12px;
+  border-top:1px solid var(--line);
+  background:linear-gradient(180deg,#f7fbff,#eaf3fb);
+  color:#3a6b91;
+  font-size:11.5px;
+  cursor:pointer;
+}
+.chart-expand-hint:hover{background:#e2effa;color:var(--blue-deep);}
+body.chart-collapsed .chart-expand-hint{display:flex;}
+
+/* ================= 原始数据标识 ================= */
+.tb-badge{
+  margin-left:10px;
+  padding:1px 8px;
+  border-radius:9px;
+  background:rgba(255,255,255,.2);
+  border:1px solid rgba(255,255,255,.45);
+  color:#fff;
+  font-size:11px;
+  letter-spacing:.5px;
+  white-space:nowrap;
+}
+.side-head{display:flex;align-items:center;gap:6px;}
+.sh-tag{
+  padding:0 5px;
+  border-radius:7px;
+  background:#e8f1f9;
+  color:#4a7fa8;
+  font-size:10px;
+  line-height:14px;
+  letter-spacing:0;
 }

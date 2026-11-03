@@ -380,22 +380,41 @@ function renderTable(emptyMsg) {
   theadRow.innerHTML = '';
   tbody.innerHTML = '';
 
-  const totalW = state.headers.reduce((s, h) => s + h[1], 0);
+  const totalW = state.headers.reduce(
+    (sum, [label, w]) => sum + colWidth(state.cat, label, w), 0);
   $('#tbl').style.minWidth = totalW ? totalW + 'px' : '0';
+  requestAnimationFrame(updateHScrollTip);
 
-  const idxLabel = state.sort.col === 0 ? '序号' : '序号';
   state.headers.forEach(([label, w], ci) => {
     const th = document.createElement('th');
-    th.style.width = w + 'px';
-    th.title = ci === 0 ? `${label}（点击按原始顺序排序）` : `${label}（点击排序）`;
+    const width = colWidth(state.cat, label, w);
+    th.style.width = width + 'px';
+    th.style.minWidth = width + 'px';
+    th.title = `${label}（点击排序，拖动右边缘调列宽）`;
+
+    // 文字放在内层，便于省略号生效，同时给拖拽把手留位置
+    const inner = document.createElement('span');
+    inner.className = 'th-inner';
     const mark = document.createElement('i');
     mark.className = 'sortmark';
     const sorted = state.sort.col === ci && state.sort.dir !== 0;
     mark.textContent = sorted ? (state.sort.dir > 0 ? '▲' : '▼') : '⇅';
-    th.appendChild(document.createTextNode(label));
-    th.appendChild(mark);
+    inner.appendChild(document.createTextNode(label));
+    inner.appendChild(mark);
+    th.appendChild(inner);
+
+    // 列宽拖拽把手
+    const grip = document.createElement('span');
+    grip.className = 'colgrip';
+    grip.addEventListener('mousedown', ev => startColResize(ev, th, label, ci));
+    grip.addEventListener('click', ev => ev.stopPropagation());
+    th.appendChild(grip);
+
     if (sorted) th.classList.add('sorted');
-    th.addEventListener('click', () => toggleSort(ci));
+    th.addEventListener('click', ev => {
+      if (ev.target === grip) return;
+      toggleSort(ci);
+    });
     theadRow.appendChild(th);
   });
 
@@ -482,6 +501,62 @@ function applySavedSort() {
   if (!saved || !saved.dir) return;
   const ci = state.headers.findIndex(h => h[0] === saved.col);
   if (ci >= 0) state.sort = { col: ci, dir: saved.dir };
+}
+
+/* ---------- 列宽：可拖动，并按分类+列名记忆 ---------- */
+const WIDTH_KEY = 'awa.widths.v1';
+
+function loadWidths() {
+  try {
+    const j = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
+    return (j && typeof j === 'object') ? j : {};
+  } catch (e) { return {}; }
+}
+
+function colWidth(cat, label, fallback) {
+  const m = loadWidths()[cat];
+  const w = m && m[label];
+  return (typeof w === 'number' && w >= 40) ? w : fallback;
+}
+
+function setColWidth(cat, label, w) {
+  const all = loadWidths();
+  (all[cat] = all[cat] || {})[label] = Math.round(w);
+  try { localStorage.setItem(WIDTH_KEY, JSON.stringify(all)); } catch (e) { /* ignore */ }
+}
+
+function startColResize(ev, th, label, ci) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const startX = ev.clientX;
+  const startW = th.getBoundingClientRect().width;
+  document.body.classList.add('col-resizing');
+
+  const onMove = e => {
+    const w = Math.max(46, startW + (e.clientX - startX));
+    th.style.width = w + 'px';
+    th.style.minWidth = w + 'px';
+  };
+  const onUp = () => {
+    document.body.classList.remove('col-resizing');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    const finalW = th.getBoundingClientRect().width;
+    setColWidth(state.cat, label, finalW);
+    // 同步到表头下拉宽条消失后的布局
+    renderTable();
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+/* ---------- 横向滚动提示 ---------- */
+function updateHScrollTip() {
+  const wrap = $('.tablewrap');
+  const tip = $('#hscrollTip');
+  if (!wrap || !tip) return;
+  const overflow = wrap.scrollWidth - wrap.clientWidth;
+  tip.classList.toggle('show', overflow > 8);
 }
 
 function toggleSort(ci) {
@@ -1263,6 +1338,43 @@ $('#fpReset').addEventListener('click', () => {
 });
 $('#btnRevert').addEventListener('click', revertEdits);
 
+/* -------- 曲线区折叠 -------- */
+const COLLAPSE_KEY = 'awa.chartCollapsed.v1';
+
+function setChartCollapsed(on) {
+  document.body.classList.toggle('chart-collapsed', !!on);
+  try { localStorage.setItem(COLLAPSE_KEY, on ? '1' : '0'); } catch (e) { /* ignore */ }
+  // 折叠/展开后画布尺寸变了，重绘一次
+  requestAnimationFrame(() => {
+    draw();
+    updateHScrollTip();
+  });
+}
+
+function toggleChart() {
+  setChartCollapsed(!document.body.classList.contains('chart-collapsed'));
+}
+
+$('#btnToggleChart').addEventListener('click', ev => {
+  ev.stopPropagation();
+  toggleChart();
+});
+$('#chartExpandHint').addEventListener('click', toggleChart);
+
+document.addEventListener('keydown', ev => {
+  if (ev.altKey && (ev.key === 'c' || ev.key === 'C')) {
+    ev.preventDefault();
+    toggleChart();
+  }
+});
+
+/* 恢复上次的折叠状态 */
+try {
+  if (localStorage.getItem(COLLAPSE_KEY) === '1') {
+    document.body.classList.add('chart-collapsed');
+  }
+} catch (e) { /* ignore */ }
+
 /* 表格空白处双击不再触发文件定位，改为提示可编辑 */
 $('#tbl').addEventListener('dblclick', e => {
   if (e.target.closest('td')) return;
@@ -1270,8 +1382,16 @@ $('#tbl').addEventListener('dblclick', e => {
 
 $$('.mod').forEach(btn => {
   btn.addEventListener('click', () => {
-    if (btn.dataset.mod === 'data') return;
-    toast('该模块不在本 Demo 范围内，当前聚焦【数据管理】');
+    const mod = btn.dataset.mod;
+    if (mod === 'data') {
+      toast('当前为【原始数据】——仪器导出的 AWA 原样展示，不修改源文件', 2600);
+      return;
+    }
+    if (mod === 'organize') {
+      toast('数据整理：重命名、分组与批量筛选（规划中，待确认整理规则后开发）', 3000);
+      return;
+    }
+    toast('该模块尚未开发，当前聚焦【原始数据】与【数据整理】');
   });
 });
 
@@ -1309,8 +1429,17 @@ document.addEventListener('keydown', e => {
 let rzTimer = null;
 new ResizeObserver(() => {
   clearTimeout(rzTimer);
-  rzTimer = setTimeout(draw, 60);
+  rzTimer = setTimeout(() => { draw(); updateHScrollTip(); }, 60);
 }).observe($('.chartwrap'));
+
+new ResizeObserver(() => updateHScrollTip()).observe($('.tablewrap'));
+$('.tablewrap').addEventListener('scroll', () => {
+  const tip = $('#hscrollTip');
+  if (tip && tip.classList.contains('show')) {
+    clearTimeout(tip._t);
+    tip._t = setTimeout(() => tip.classList.remove('show'), 900);
+  }
+}, { passive: true });
 
 /* ============================================================ 启动 */
 (function boot() {

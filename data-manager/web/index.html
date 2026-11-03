@@ -17,6 +17,7 @@
       </svg>
     </div>
     <div class="tb-title">AWA 声学数据管理 <span class="ver">V1.0</span></div>
+    <div class="tb-badge" id="tbBadge">原始数据</div>
     <div class="tb-note" id="tbNote">本地服务 · 127.0.0.1</div>
     <div class="winbtns">
       <button id="btnSetting" class="wb-text" title="设置数据目录">设置</button>
@@ -41,15 +42,19 @@
       </span>
       <span class="ml">数据管理</span>
     </button>
-    <button class="mod" data-mod="calib">
+    <button class="mod" data-mod="organize">
       <span class="mi">
         <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
-          <path d="M14 16h-4a2 2 0 00-2 2v4a2 2 0 002 2h4l7 6V10l-7 6z" fill="#6f7f8f"/>
-          <path d="M26 15a7 7 0 010 10M30 11a12 12 0 010 18" stroke="#2f7fbe" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-          <circle cx="12" cy="30" r="4" fill="#e0a33a"/>
+          <!-- 数据整理：文件 + 排序箭头 -->
+          <rect x="7" y="6" width="17" height="22" rx="2" fill="#d8e6f3" stroke="#6f97b8" stroke-width="1.6"/>
+          <path d="M11 12h9M11 17h9M11 22h5" stroke="#5b83a6" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M27 20h8" stroke="#3fa96f" stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M31 15v22" stroke="#3fa96f" stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M31 13l-3.5 4h7L31 13z" fill="#3fa96f"/>
+          <path d="M31 29l-3.5 4h7L31 29z" fill="#3fa96f"/>
         </svg>
       </span>
-      <span class="ml">校准管理</span>
+      <span class="ml">数据整理</span>
     </button>
     <button class="mod" data-mod="info">
       <span class="mi">
@@ -178,7 +183,7 @@
 
     <!-- 左：数据分类 -->
     <aside class="sidebar">
-      <div class="side-head">数据分类</div>
+      <div class="side-head">数据分类 <span class="sh-tag">原始</span></div>
       <ul id="catList" class="catlist"></ul>
       <div class="side-foot">
         <div class="sf-row"><span>仪器</span><b id="insModel">—</b></div>
@@ -195,9 +200,17 @@
           <tbody></tbody>
         </table>
         <div class="table-empty" id="tableEmpty" hidden></div>
+        <div class="hscroll-tip" id="hscrollTip">← 可左右拖动查看更多列 →</div>
       </div>
 
       <div class="curvebar" id="curvebar">
+        <button class="chart-toggle" id="btnToggleChart" title="折叠/展开曲线区（Alt+C）">
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7"
+                  fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>曲线</span>
+        </button>
         <div class="curve-stub">
           <div class="cstub-head">曲线</div>
           <div class="cstub-val" id="stubVal">SPL(Z) dB</div>
@@ -208,6 +221,15 @@
       <div class="chartwrap">
         <canvas id="chart"></canvas>
         <div class="chart-empty" id="chartEmpty">点击上方列表中的文件，查看频谱曲线</div>
+      </div>
+
+      <!-- 折叠后在这里点一下即可展开 -->
+      <div class="chart-expand-hint" id="chartExpandHint">
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+          <path d="M4 10l4-4 4 4" stroke="currentColor" stroke-width="1.7"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>曲线区已折叠，点击展开</span>
       </div>
     </section>
   </main>
