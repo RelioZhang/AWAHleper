@@ -47,6 +47,7 @@ jobs:
             --name "AWA数据管理" ^
             --distpath dist-dir --workpath build-dir ^
             --hidden-import openpyxl ^
+            --hidden-import PySide6.QtSvg ^
             desktop.py
 
       - name: 打压缩包（单文件夹版）
@@ -64,6 +65,7 @@ jobs:
             --name "AWA数据管理-单文件" ^
             --distpath dist-one --workpath build-one ^
             --hidden-import openpyxl ^
+            --hidden-import PySide6.QtSvg ^
             desktop.py
 
       - name: 检查产物

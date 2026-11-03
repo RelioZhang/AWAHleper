@@ -4,7 +4,7 @@ title 打包 AWA 数据管理
 cd /d "%~dp0"
 
 echo ==============================================
-echo  将 AWA 数据管理打包为单文件 exe
+echo  将 AWA 数据管理打包为「免安装文件夹」
 echo ==============================================
 echo.
 
@@ -39,15 +39,28 @@ if errorlevel 1 (
     )
 )
 
-echo [3/3] 开始打包（约 1-3 分钟）...
+echo [3/3] 开始打包（约 2-4 分钟）...
 echo.
+rem 用 onedir 而不是 onefile：启动不用解压，1 秒内就能开；
+rem 把 dist\AWA数据管理 整个文件夹压缩后发同事，解压双击 exe 即用。
 python -m PyInstaller ^
     --noconfirm ^
     --clean ^
-    --onefile ^
+    --onedir ^
     --windowed ^
     --name "AWA数据管理" ^
-    --icon NONE ^
+    --hidden-import PySide6.QtSvg ^
+    --exclude-module tkinter ^
+    --exclude-module PySide6.QtWebEngineCore ^
+    --exclude-module PySide6.QtWebEngineWidgets ^
+    --exclude-module PySide6.QtWebEngineQuick ^
+    --exclude-module PySide6.Qt3DCore ^
+    --exclude-module PySide6.QtMultimedia ^
+    --exclude-module PySide6.QtQuick ^
+    --exclude-module PySide6.QtQml ^
+    --exclude-module matplotlib ^
+    --exclude-module numpy ^
+    --exclude-module pandas ^
     desktop.py
 
 if errorlevel 1 (
@@ -59,11 +72,11 @@ if errorlevel 1 (
 
 echo.
 echo ==============================================
-echo  完成！可执行文件在：
-echo    %~dp0dist\AWA数据管理.exe
+echo  完成！程序在：
+echo    %~dp0dist\AWA数据管理\AWA数据管理.exe
 echo.
-echo  这个 exe 可以单独拷给同事使用，
-echo  对方电脑无需安装 Python。
+echo  把 dist\AWA数据管理 整个文件夹压缩后发给同事，
+echo  对方解压双击 exe 就能用，无需安装 Python。
 echo ==============================================
 echo.
 pause

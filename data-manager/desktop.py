@@ -592,6 +592,7 @@ class MainWindow(QMainWindow):
         self.store = store
         self.cat = "13OCT"
         self.organize = False
+        self.module = "data"
         self.model: AwA_TableModel | None = None
         self.selected_file = ""
         self.detail_cache: dict[str, dict] = {}
@@ -621,6 +622,7 @@ class MainWindow(QMainWindow):
 
         self.setStatusBar(QStatusBar())
         self._apply_mode()
+        self.mod_buttons["data"].setChecked(True)
 
     # ---------- 图标 ----------
     @staticmethod
@@ -647,7 +649,8 @@ class MainWindow(QMainWindow):
         lay.setSpacing(0)
 
         self.mod_buttons = {}
-        for key, label in (("data", "数据管理"), ("organize", "数据整理")):
+        for key, label in (("data", "数据管理"), ("organize", "数据整理"),
+                           ("report", "报告生成")):
             b = QPushButton(label, objectName="modbtn")
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
@@ -721,6 +724,17 @@ class MainWindow(QMainWindow):
 
     # ---------- 右侧内容 ----------
     def _build_content(self) -> QWidget:
+        from PySide6.QtWidgets import QStackedWidget
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._build_data_page())
+
+        from report_ui import ReportPage
+        self.report_page = ReportPage(self.store)
+        self.stack.addWidget(self.report_page)
+        return self.stack
+
+    def _build_data_page(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -807,13 +821,34 @@ class MainWindow(QMainWindow):
 
     # ---------- 模块切换 ----------
     def set_module(self, key: str) -> None:
+        self.module = key
         self.organize = (key == "organize")
         for k, b in self.mod_buttons.items():
             b.setChecked(k == key)
+
+        if key == "report":
+            self.stack.setCurrentWidget(self.report_page)
+            self._apply_mode()
+            self.report_page.set_store(self.store)
+            return
+
+        self.stack.setCurrentIndex(0)
         self._apply_mode()
         self.reload_table()
 
     def _apply_mode(self) -> None:
+        if self.module == "report":
+            self.badge.setText("报告生成")
+            self.modebar.setText(
+                "  报告生成 · 左侧是测点清单，右侧填内侧/外侧文件与设计值，"
+                "曲线即时预览；点【生成表格与曲线】输出报告用的 xlsx 和图")
+            self.modebar.setProperty("editable", False)
+            self.tagbar.setVisible(False)
+            self.modebar.style().unpolish(self.modebar)
+            self.modebar.style().polish(self.modebar)
+            return
+
+        self.tagbar.setVisible(not self.organize)
         if self.organize:
             self.badge.setText("数据整理")
             self.modebar.setText(
@@ -847,6 +882,8 @@ class MainWindow(QMainWindow):
         self._fill_categories(info)
         self._fill_instrument(info.get("instrument") or {})
         self.reload_table()
+        if self.module == "report":
+            self.report_page.set_store(self.store)
         self.statusBar().showMessage(
             f"{info['dir']}　共 {info['files']} 个 AWA 文件　"
             f"用时 {info['elapsedMs']} ms", 8000)
