@@ -1062,3 +1062,58 @@ body.view-org .batch-drawer:not([hidden]) ~ .chartwrap{opacity:.35;}
   background:linear-gradient(180deg,#f4fbf6 0%,#d8ecdf 100%);
   color:#2c6b48;
 }
+
+/* ================= 标记过滤条 ================= */
+.tagbar{
+  flex:0 0 30px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:0 12px;
+  border-bottom:1px solid var(--line-soft);
+  background:#fbfdff;
+}
+.tb-label{font-size:11.5px;color:var(--text-3);}
+.tagchip{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  height:22px;
+  padding:0 10px;
+  border:1px solid #d5e2ee;
+  border-radius:11px;
+  background:#fff;
+  color:#4a6274;
+  font-size:11.5px;
+  cursor:pointer;
+}
+.tagchip b{
+  font-weight:700;
+  color:#2b7fc4;
+  font-size:11px;
+}
+.tagchip:hover{border-color:#9dc3e3;}
+.tagchip.on{
+  background:#e8f2fb;
+  border-color:#8fbfe4;
+  color:#14538a;
+  font-weight:700;
+}
+.tb-hint{margin-left:auto;font-size:11px;color:#9aa8b6;}
+
+/* 标记单元格 */
+#tbl td.tagcell{padding:0 4px;}
+#tbl .tagsel{
+  width:100%;
+  height:20px;
+  border:1px solid #cfdce9;
+  border-radius:3px;
+  background:#fff;
+  font-size:11.5px;
+  color:#2c4b66;
+  outline:none;
+  cursor:pointer;
+}
+#tbl .tagsel:hover{border-color:#9dc3e3;}
+#tbl td.tagcell.t-noise{background:#fff8e6;color:#8a5a00;font-weight:600;text-align:center;}
+#tbl td.tagcell.t-insul{background:#eef7f1;color:#2c6b48;font-weight:600;text-align:center;}

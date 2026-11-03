@@ -41,6 +41,8 @@ const state = {
   editCount: 0,
   editedCells: new Set(),
   picked: new Set(),          // 批量整理勾选的测量组编号
+  tagFilter: '',              // 按标记过滤：'' | 噪声级 | 隔声
+  tagCounts: {},
   vis: Object.fromEntries(METRICS.map(m => [m.key, true])),
   cache: new Map(),
   w: 0, h: 0,
@@ -242,7 +244,9 @@ async function loadTable(cat) {
 
   try {
     const view = isEditMode() ? '&view=organize' : '';
-    const j = await api('/api/table?cat=' + encodeURIComponent(cat) + view);
+    const tag = (isEditMode() && state.tagFilter) ? '&tag=' + encodeURIComponent(state.tagFilter) : '';
+    const j = await api('/api/table?cat=' + encodeURIComponent(cat) + view + tag);
+    state.tagCounts = j.tagCounts || {};
     state.headers = j.headers;
     state.rows = j.rows;
     state.fields = j.fields || [];
@@ -503,6 +507,33 @@ function renderTable(emptyMsg) {
       td.title = txt;
 
       const f = fieldMap[ci];
+      // 标记列单独处理
+      if (f && f.t === 'tag') {
+        td.classList.add('tagcell');
+        const tag = String(cell || '');
+        if (isEditMode()) {
+          const sel = document.createElement('select');
+          sel.className = 'tagsel';
+          [['', '—'], ['噪声级', '噪声级'], ['隔声', '隔声']].forEach(([v, lb]) => {
+            const o = document.createElement('option');
+            o.value = v; o.textContent = lb;
+            if (v === tag) o.selected = true;
+            sel.appendChild(o);
+          });
+          sel.addEventListener('click', ev => ev.stopPropagation());
+          sel.addEventListener('change', ev => {
+            ev.stopPropagation();
+            setTag(idx, ci, sel.value);
+          });
+          td.textContent = '';
+          td.appendChild(sel);
+        } else {
+          td.textContent = tag || '—';
+          if (tag) td.classList.add(tag === '噪声级' ? 't-noise' : 't-insul');
+        }
+        tr.appendChild(td);
+        return;
+      }
       if (f) {
         const isDirty = (state.editedCells || new Set()).has(`${idx}:${ci}`);
         if (isDirty) td.classList.add('modified');
@@ -543,6 +574,7 @@ function renderTable(emptyMsg) {
     empty.hidden = true;
   }
   updateFpStat();
+  updateTagBar();
 }
 
 /* ---------- 排序状态持久化 ---------- */
@@ -1511,6 +1543,71 @@ $('.tablewrap').addEventListener('scroll', () => {
 }, { passive: true });
 
 
+
+/* ---------- 测量标记（噪声级 / 隔声） ---------- */
+$$('#tagBar .tagchip').forEach(btn => {
+  btn.addEventListener('click', () => setTagFilter(btn.dataset.tag || ''));
+});
+
+
+async function setTag(idx, ci, value) {
+  const row = state.rows[idx];
+  const gid = groupIdOf(row[1]);
+  try {
+    await postJSON('/api/edit', { file: row[1], path: '_tag', value });
+  } catch (e) {
+    return toast('标记失败：' + e.message, 3000);
+  }
+  // 同组所有行同步显示
+  state.rows.forEach(r => {
+    if (groupIdOf(r[1]) === gid) r[ci] = value;
+  });
+  state.cache.clear();
+  renderTable();
+  updateTagBar();
+  toast(value ? `已标记为「${value}」` : '已清除标记', 1800);
+
+  // 当前有过滤条件且这行不再匹配时，重新取表
+  if (state.tagFilter && value !== state.tagFilter) {
+    await loadTable(state.cat);
+  }
+}
+
+/* 两个分类默认关注的标记类型 */
+const DEFAULT_TAG = { '13OCT': '隔声', 'OCT': '噪声级' };
+
+function ensureTagFilterDefault() {
+  if (state.tagFilter === undefined || state.tagFilter === null) state.tagFilter = '';
+  return state.tagFilter;
+}
+
+function updateTagBar() {
+  const bar = $('#tagBar');
+  if (!bar) return;
+  if (!isEditMode()) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const tc = state.tagCounts || {};
+  const def = DEFAULT_TAG[state.cat] || '';
+  const total = (tc['噪声级'] || 0) + (tc['隔声'] || 0) + (tc['未标记'] || 0);
+  $$('#tagBar .tagchip').forEach(btn => {
+    const v = btn.dataset.tag || '';
+    btn.classList.toggle('on', state.tagFilter === v);
+    const n = v ? (tc[v] || 0) : total;
+    btn.querySelector('b').textContent = n;
+  });
+  const hint = $('#tagHint');
+  if (hint) {
+    hint.textContent = state.tagFilter
+      ? `当前只显示「${state.tagFilter}」，共 ${tc[state.tagFilter] || 0} 组`
+      : `当前显示全部 ${total} 组（本分类常用：${def}）`;
+  }
+}
+
+function setTagFilter(v) {
+  state.tagFilter = v;
+  updateTagBar();
+  loadTable(state.cat);
+}
 
 /* ============================================================ 模块模式 */
 /* 两个模块共用同一套界面，唯一差别是「能不能改」 */

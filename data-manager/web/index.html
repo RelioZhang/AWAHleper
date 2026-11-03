@@ -191,6 +191,15 @@
   <!-- ================= 主体（原始数据，只读） ================= -->
   <main class="body" id="viewRaw">
 
+    <!-- 标记过滤条（仅数据整理显示） -->
+    <div class="tagbar" id="tagBar" hidden>
+      <span class="tb-label">显示</span>
+      <button class="tagchip on" data-tag=""><span>全部</span><b>0</b></button>
+      <button class="tagchip" data-tag="噪声级"><span>噪声级</span><b>0</b></button>
+      <button class="tagchip" data-tag="隔声"><span>隔声</span><b>0</b></button>
+      <span class="tb-hint" id="tagHint"></span>
+    </div>
+
     <!-- 模式状态条：原始数据只读 / 数据整理可编辑 -->
     <div class="mode-bar" id="modeBar">
       <span class="mb-icon" id="mbIcon"></span>

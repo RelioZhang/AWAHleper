@@ -211,6 +211,10 @@ BANDS_ALL = [6.3, 8, 10, 12.5, 16, 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
              3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000]
 METRICS = ["Leq,T", "LFmax", "LFmin", "LSmax", "LSmin"]
 
+# 测量用途标记：OCT 主要表现噪声级，1/3OCT 主要表现隔声
+TAG_NOISE = "噪声级"
+TAG_INSULATION = "隔声"
+
 # ============================================================ 编辑覆盖层 ===
 # 原始 AWA 文件是仪器导出件，任何情况下都不改写。
 # 界面上的修改以「文件名 → 字段路径 → 新值」的形式存进独立侧车文件，
@@ -263,7 +267,24 @@ class EditStore:
         self.save()
 
     def count(self) -> int:
-        return sum(len(v) for v in self.data.values())
+        return sum(len(v) for k, v in self.data.items() if k != "_tags")
+
+    # ---- 测量标记：噪声级 / 隔声（按组，存放在 _tags 下，不污染字段） ----
+    def get_tag(self, gid: str) -> str:
+        return (self.data.get("_tags") or {}).get(gid, "")
+
+    def set_tag(self, gid: str, tag: str) -> None:
+        tags = self.data.setdefault("_tags", {})
+        if tag:
+            tags[gid] = tag
+        else:
+            tags.pop(gid, None)
+        if not tags:
+            self.data.pop("_tags", None)
+        self.save()
+
+    def tags(self) -> dict:
+        return dict(self.data.get("_tags") or {})
 
 
 def band_label(key: str) -> str:
@@ -309,6 +330,8 @@ def apply_edits(rec: dict, edits: dict) -> dict:
     out["_edits"] = sorted(edits.keys())
 
     for path, val in edits.items():
+        if path == "_tags":
+            continue
         parts = path.split(":")
         try:
             if len(parts) == 1:
@@ -654,8 +677,14 @@ class Store:
     def _f(v, spec="{:.1f}", dash="—"):
         return dash if v is None else spec.format(v)
 
-    def _view(self, r: dict) -> dict:
-        """原始解析结果 + 侧车编辑。"""
+    def _view(self, r: dict, organize: bool = True) -> dict:
+        """取一条记录的展示值。
+
+        原始数据是仪器导出的备份，不参与任何整理，必须看到真值；
+        只有整理视图才叠加侧车里的改动。
+        """
+        if not organize:
+            return r
         return apply_edits(r, self.edits.data.get(r["file"], {}))
 
     # 原始视图显示全部频带；整理视图按现场习惯只留关注区间
@@ -664,7 +693,8 @@ class Store:
         "OCT": {"lo": 63, "hi": 8000},         # OCT: 63Hz ~ 8kHz
     }
 
-    def _spectrum_table(self, cat: str, organize: bool) -> dict:
+    def _spectrum_table(self, cat: str, organize: bool,
+                        tag_filter: str = "") -> dict:
         """1/3OCT 与 OCT 的表格。
 
         organize=True 为数据整理视图，按现场汇报口径精简：
@@ -674,6 +704,9 @@ class Store:
         """
         kind = "1/3OCT" if cat == "13OCT" else "OCT"
         files = [r for r in self._sorted() if r["kind"] == kind]
+        if tag_filter:
+            files = [r for r in files
+                     if self.edits.get_tag(self.group_of(r["file"])) == tag_filter]
         win = self.VIEW_BANDS.get(cat, {}) if organize else {}
 
         # 这一类文件用的是 SPL(x) 还是 W_x？决定取值与编辑路径
@@ -693,9 +726,13 @@ class Store:
             band_list = all_bands
 
         # ---- 表头 ----
+        # 列序：经历时间在测试时间之前；测试时间为仪器记录，整理中只读
         headers = [("序号", 58), ("文件名", 150), ("测点名", 124), ("测试日期", 104),
-                   ("测试时间", 92), ("经历时间", 96)]
+                   ("经历时间", 96), ("测试时间", 92)]
+        if organize:
+            headers.append(("标记", 84))
         tail = []                       # [(表头, 宽度, 取值函数, 编辑路径)]
+        item_pos = {}                   # tail 下标 -> (row 列号, 编辑路径)
         f = self._f
 
         def add_spl(key, label, width=70):
@@ -726,7 +763,7 @@ class Store:
         band_start = len(headers)
         for b in band_list:
             headers.append((band_label(b), 66))
-            tail.append((None, 66,
+            tail.append((band_label(b), 66,
                          lambda v, bb=b: f(v["metrics"].get("Leq,T", {}).get(bb)),
                          f"band:Leq,T:{b}"))
 
@@ -747,19 +784,30 @@ class Store:
                              lambda v, kk=k: f(v["rating"].get("Leq,T", {}).get(kk)),
                              f"rating:Leq,T:{k}"))
 
+        # 登记每一列在 row 中的真实位置（基础列 6 个 + 整理视图的标记列 + tail 顺序）
+        base_cols = 6 + (1 if organize else 0)
+        for j, item in enumerate(tail):
+            item_pos[j] = (base_cols + j, item[3])
+
         # ---- 数据行 ----
         rows, fields = [], []
         for i, r in enumerate(files, 1):
-            v = self._view(r)
-            row = [str(i), r["file"], v["point"], v["date"], v["time"], v["ts"]]
+            v = self._view(r, organize)
+            row = [str(i), r["file"], v["point"], v["date"], v["ts"], v["time"]]
+            if organize:
+                # 标记属于整理结果，原始数据视图不展示
+                row.append(self.edits.get_tag(self.group_of(r["file"])))
             row += [item[2](v) for item in tail]
             rows.append(row)
 
             cells = {2: dict(p="point", t="text", one="group"),
                      3: dict(p="date", t="text", one="group"),
-                     4: dict(p="time", t="text", one="group")}
-            for j, item in enumerate(tail):
-                cells[band_start + j] = dict(p=item[3], t="num")
+                     4: dict(p="ts", t="text"),          # 经历时间可改
+                     5: dict(ro=1),                       # 测试时间只读
+                     6: dict(p="_tag", t="tag")}          # 噪声级 / 隔声
+            for j in range(len(tail)):
+                col, path = item_pos[j]
+                cells[col] = dict(p=path, t="num")
             fields.append(cells)
 
         scope = (f"{band_label(win['lo'])}~{band_label(win['hi'])}"
@@ -769,7 +817,8 @@ class Store:
                     bandCols=band_list, bandStart=band_start,
                     extraStart=extra_start, note=note)
 
-    def table(self, cat: str, organize: bool = False) -> dict:
+    def table(self, cat: str, organize: bool = False,
+              tag_filter: str = "") -> dict:
         """返回表头、行数据与「可编辑单元格」映射。
 
         fields[i][j] 描述第 i 行第 j 列能否编辑及其字段路径：
@@ -780,7 +829,7 @@ class Store:
         """
         self.ensure()
         if cat in ("13OCT", "OCT"):
-            return self._spectrum_table(cat, organize)
+            return self._spectrum_table(cat, organize, tag_filter)
 
         if cat == "STA":
             files = [r for r in self._sorted() if r["kind"] == "STA"]
@@ -791,7 +840,7 @@ class Store:
                        ("SD", 56), ("SEL", 64)]
             rows, fields = [], []
             for i, r in enumerate(files, 1):
-                v = self._view(r)
+                v = self._view(r, organize)
                 metric, st = next(iter(v["stats"].items()), ("A F", {}))
                 rows.append([str(i), r["file"], v["point"], v["date"], v["time"]] +
                             [self._f(st.get(k)) for k in keys])
@@ -813,7 +862,7 @@ class Store:
             for r in self._sorted():
                 if not r["spl"]:
                     continue
-                v = self._view(r)
+                v = self._view(r, organize)
                 for metric in METRICS:
                     if metric not in v["spl"]:
                         continue
@@ -838,7 +887,7 @@ class Store:
                        ("最大占比 (%)", 104), ("分布档数", 84)]
             rows, fields = [], []
             for i, r in enumerate(files, 1):
-                v = self._view(r)
+                v = self._view(r, organize)
                 d = v["dist"]
                 meta = self._sibling(r["file"]) or {}
                 point = v["point"] or meta.get("point", "")
@@ -934,12 +983,25 @@ class Store:
         self.ensure()                       # 直接调接口时也能用
         if name not in self.records:
             raise ValueError(f"未找到文件：{name}")
+
+        # 测量标记：按组存，不属于任何单个文件字段
+        if path == "_tag":
+            tag = (value or "").strip()
+            if tag not in ("", TAG_NOISE, TAG_INSULATION):
+                raise ValueError(f"未知标记：{tag}")
+            gid = self.group_of(name)
+            self.edits.set_tag(gid, tag)
+            return dict(file=name, path=path, value=tag, groupId=gid,
+                        targets=[n for n in self.records
+                                 if self.group_of(n) == gid],
+                        edits=self.edits.count())
+
         head = path.split(":")[0]
-        if head not in ("point", "date", "time", "spl", "stat", "band",
+        if head not in ("point", "date", "time", "ts", "spl", "stat", "band",
                         "dist", "wa", "rating"):
             raise ValueError(f"该字段不支持编辑：{path}")
 
-        if head in ("point", "date", "time"):
+        if head in ("point", "date", "time", "ts"):
             val = None if value in (None, "") else str(value).strip()
             targets = self.group_members(name) if group else [name]
         else:
@@ -1040,6 +1102,19 @@ class Store:
                 ts=v.get("ts", ""),
             ))
         out.sort(key=lambda g: (g["date"] or "", g["time"] or "", g["gid"]))
+        return out
+
+    def tag_counts(self, cat: str) -> dict:
+        """当前分类下，各标记的组数（供界面显示筛选结果数量）。"""
+        kind = {"13OCT": "1/3OCT", "OCT": "OCT"}.get(cat)
+        if not kind:
+            return {}
+        gids = {self.group_of(r["file"]) for r in self.records.values()
+                if r["kind"] == kind}
+        out = {TAG_NOISE: 0, TAG_INSULATION: 0, "未标记": 0}
+        for g in gids:
+            t = self.edits.get_tag(g)
+            out[t if t else "未标记"] = out.get(t if t else "未标记", 0) + 1
         return out
 
     def summary(self) -> dict:
@@ -1207,11 +1282,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/table":
                 cat = q.get("cat", "13OCT")
                 organize = q.get("view") == "organize"
-                data = self.store.table(cat, organize=organize)
+                data = self.store.table(cat, organize=organize,
+                                        tag_filter=q.get("tag", ""))
                 data["ok"] = True
                 data["cat"] = cat
                 data["organize"] = organize
                 data["editCount"] = self.store.edits.count()
+                data["tagCounts"] = self.store.tag_counts(cat)
                 return self._json(data)
 
             if path == "/api/edits":
