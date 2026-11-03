@@ -47,13 +47,23 @@ pip install PySide6
 
 #### 打包成 exe
 
-双击 `打包exe.bat`，脚本会自动装 PyInstaller 并生成：
+**方式一：GitHub Actions 云端打包（推荐，无需本地环境）**
 
-```
-dist\AWA数据管理.exe
+1. 打开仓库的 **Actions** 标签页
+2. 左侧选 **Build Windows EXE** → 右侧 **Run workflow** → 绿色按钮
+3. 等约 3~5 分钟，点进这次运行，页面底部 **Artifacts** 下载：
+   - `AWA数据管理-免安装版.zip` — 解压即用，**启动快**，建议自己长期使用
+   - `AWA数据管理-单文件.exe` — 单个文件，**发给同事最方便**，首次启动稍慢
+
+打 tag 会自动打包并发布到 Release：
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
 ```
 
-这个 exe 可单独拷给同事，对方电脑**不需要装 Python**。
+**方式二：本地打包**
+
+双击 `打包exe.bat`，脚本自动装 PyInstaller 并生成 `dist\AWA数据管理.exe`。
 
 ### 网页版
 
