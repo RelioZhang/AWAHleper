@@ -931,11 +931,11 @@ class Store:
         return sorted(self.records.values(), key=key)
 
     # ---------------- 详情 ----------------
-    def detail(self, name: str) -> dict | None:
+    def detail(self, name: str, organize: bool = True) -> dict | None:
         r = self.records.get(name)
         if r is None:
             return None
-        out = self._view(r)
+        out = self._view(r, organize)
         out["file"] = name
         # 只保留有效频带，前端按数值排序
         for m, bands in out["metrics"].items():

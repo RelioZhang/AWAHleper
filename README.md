@@ -15,25 +15,53 @@ AWAHelper/
 
 ## data-manager：数据管理模块
 
-按「数据分类 → 文件列表 → 频谱曲线」三层结构查看 AWA 数据，界面参照 AWA 助手。
+按「数据分类 → 文件列表 → 频谱曲线」三层结构查看 AWA 数据。
 
-### 运行
+提供两种界面，功能完全一致，共用同一套解析与存储逻辑：
 
-需要 Python 3.8+（无需安装任何第三方库）。
+| 版本 | 入口 | 依赖 |
+|---|---|---|
+| 桌面版（推荐） | `启动桌面版.bat` | `pip install PySide6` |
+| 网页版 | `启动数据管理.bat` | 无（纯标准库） |
+
+### 桌面版
+
+真正的 Windows 窗口程序，不是网页。
 
 ```
-双击 data-manager\启动数据管理.bat
+双击 启动桌面版.bat
 ```
 
-或命令行：
+或用 pythonw 直接跑（不弹黑窗）：
 
 ```bash
-python data-manager/server.py                # 自动沿用上次目录
-python data-manager/server.py --dir D:\数据   # 指定数据目录
-python data-manager/server.py --port 8765
+pythonw desktop.py
+pythonw desktop.py --dir D:\某批数据
 ```
 
-启动后会自动打开浏览器 `http://127.0.0.1:8765`。
+首次使用需安装界面库（仅一个）：
+
+```bash
+pip install PySide6
+```
+
+#### 打包成 exe
+
+双击 `打包exe.bat`，脚本会自动装 PyInstaller 并生成：
+
+```
+dist\AWA数据管理.exe
+```
+
+这个 exe 可单独拷给同事，对方电脑**不需要装 Python**。
+
+### 网页版
+
+```
+双击 启动数据管理.bat
+```
+
+或 `python server.py --dir D:\数据 --port 8765`，浏览器访问 `http://127.0.0.1:8765`。
 
 ### 选择数据目录
 
