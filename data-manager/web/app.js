@@ -30,6 +30,8 @@ const state = {
   selectedFile: null,
   detail: null,
   cleared: false,
+  recent: [],
+  suggest: [],
   vis: Object.fromEntries(METRICS.map(m => [m.key, true])),
   cache: new Map(),
   w: 0, h: 0,
@@ -105,10 +107,13 @@ async function scan(dir) {
     state.dir = j.dir;
     state.categories = j.categories;
     state.instrument = j.instrument || {};
+    state.recent = j.recent || [];
+    state.suggest = j.suggest || [];
     state.cleared = false;
     state.cache.clear();
     renderCats();
     renderInstrument();
+    renderDirChips();
 
     const awaCount = j.categories.find(c => c.key === '13OCT')?.count || 0;
     $('#stDir').textContent = '数据目录：' + j.dir;
@@ -121,9 +126,10 @@ async function scan(dir) {
     if (!j.files) {
       $('#dirInput').value = j.dir;
       $('#modal').hidden = false;
-      toast('该目录下没有 AWA 文件，请指定数据目录', 3000);
+      toast('该目录下没有 AWA 文件，请选择本次测试数据所在的文件夹', 3200);
       return;
     }
+    $('#modal').hidden = true;
     toast(`读取完成：${j.files} 个文件，用时 ${j.elapsedMs} ms`);
     if (j.errors && j.errors.length) {
       toast(`有 ${j.errors.length} 个文件解析失败，详见控制台`, 3200);
@@ -133,6 +139,68 @@ async function scan(dir) {
     toast('读取失败：' + e.message, 3200);
   } finally {
     showLoading(false);
+  }
+}
+
+/* ---------- 目录选择 ---------- */
+function baseName(p) {
+  const parts = String(p).replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+
+function makeChip(label, sub, full, onClick) {
+  const b = document.createElement('button');
+  b.className = 'dchip';
+  b.title = full;
+  b.innerHTML = `<b></b><span></span>`;
+  b.querySelector('b').textContent = label;
+  b.querySelector('span').textContent = sub || '';
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function renderDirChips() {
+  const recent = state.recent || [];
+  const suggest = state.suggest || [];
+
+  const rf = $('#recentField'), rl = $('#recentList');
+  rf.hidden = !recent.length;
+  rl.innerHTML = '';
+  recent.forEach(p => {
+    rl.appendChild(makeChip(baseName(p), p, p, () => applyDir(p)));
+  });
+
+  const sf = $('#suggestField'), sl = $('#suggestList');
+  sf.hidden = !suggest.length;
+  sl.innerHTML = '';
+  suggest.forEach(s => {
+    sl.appendChild(makeChip(s.name, `${s.count} 个 AWA · ${s.mtime}`, s.path, () => applyDir(s.path)));
+  });
+}
+
+async function applyDir(path) {
+  $('#dirInput').value = path;
+  await scan(path);
+}
+
+async function pickDir() {
+  const btn = $('#btnBrowse');
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '选择中…';
+  toast('请在弹出的系统窗口中选择文件夹', 4000);
+  try {
+    const j = await api('/api/pick-dir');
+    if (j.dir) {
+      await applyDir(j.dir);
+    } else {
+      toast('已取消选择');
+    }
+  } catch (e) {
+    toast('无法打开系统文件夹选择框，请直接粘贴路径：' + e.message, 5000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
   }
 }
 
@@ -616,7 +684,7 @@ function clearAll() {
 }
 
 /* ============================================================ 事件绑定 */
-$('#btnRead').addEventListener('click', () => scan(null));
+$('#btnRead').addEventListener('click', () => scan(state.dir || null));
 $('#btnExport').addEventListener('click', exportData);
 $('#btnOpen').addEventListener('click', () => reveal(state.selectedFile));
 $('#btnClear').addEventListener('click', clearAll);
@@ -641,8 +709,10 @@ $$('.wb').forEach(b => b.addEventListener('click', () => {
 
 $('#btnSetting').addEventListener('click', () => {
   $('#dirInput').value = state.dir || '';
+  renderDirChips();
   $('#modal').hidden = false;
 });
+$('#btnBrowse').addEventListener('click', pickDir);
 $('#modalClose').addEventListener('click', () => { $('#modal').hidden = true; });
 $('#modalOk').addEventListener('click', () => { $('#modal').hidden = true; });
 $('#modal').addEventListener('click', e => {

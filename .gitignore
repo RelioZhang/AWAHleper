@@ -10,7 +10,9 @@
 输出/
 图表/
 
-# 运行时产物
+# 运行时产物（.config.json 记录上次/最近的数据目录）
+.config.json
+.pick.tmp
 .lastdir
 __pycache__/
 *.py[cod]

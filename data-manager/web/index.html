@@ -195,12 +195,23 @@
     </div>
     <div class="modal-body">
       <div class="field">
-        <label for="dirInput">数据目录</label>
+        <label for="dirInput">数据目录（本次测试数据所在文件夹）</label>
         <div class="field-row">
-          <input id="dirInput" type="text" spellcheck="false">
-          <button class="btn" id="btnApplyDir">读取该目录</button>
+          <input id="dirInput" type="text" spellcheck="false" placeholder="可直接粘贴路径，或点【浏览…】选择">
+          <button class="btn" id="btnBrowse">浏览…</button>
+          <button class="btn primary" id="btnApplyDir">读取</button>
         </div>
-        <div class="hint">默认读取本程序上一级目录（awa_files）。可直接粘贴任意绝对路径。</div>
+        <div class="hint">程序目录固定，数据目录可随时切换；读取成功的目录会自动记住，下次启动直接打开。</div>
+      </div>
+
+      <div class="field" id="recentField" hidden>
+        <label>最近使用</label>
+        <div class="chiplist" id="recentList"></div>
+      </div>
+
+      <div class="field" id="suggestField" hidden>
+        <label>当前位置附近检测到的数据目录</label>
+        <div class="chiplist" id="suggestList"></div>
       </div>
 
       <div class="field">

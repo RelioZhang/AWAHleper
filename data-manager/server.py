@@ -23,6 +23,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -31,39 +32,176 @@ import urllib.parse
 import webbrowser
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+try:                                        # Python 标准库；精简版可能被裁掉
+    from tkinter import Tk, filedialog
+    HAS_TK = True
+except Exception:                           # noqa: BLE001
+    Tk = filedialog = None
+    HAS_TK = False
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(HERE, "web")
-LAST_DIR_FILE = os.path.join(HERE, ".lastdir")      # 记住上次的数据目录
+CONFIG_FILE = os.path.join(HERE, ".config.json")     # 记住上次 + 最近使用（不入库）
 ENV_DIR = os.environ.get("AWA_DATA_DIR", "")
+MAX_RECENT = 8
 
 
-def _read_last_dir() -> str:
+# ------------------------------------------------------------ 目录配置 ---
+def load_config() -> dict:
     try:
-        with open(LAST_DIR_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        if not isinstance(cfg, dict):
+            raise ValueError
+    except (OSError, ValueError):
+        cfg = {}
+    cfg.setdefault("last", "")
+    cfg.setdefault("recent", [])
+    return cfg
 
 
-def _write_last_dir(path: str) -> None:
+def save_config(cfg: dict) -> None:
     try:
-        with open(LAST_DIR_FILE, "w", encoding="utf-8") as f:
-            f.write(path)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=1)
     except OSError:
         pass
 
 
+def remember_dir(path: str) -> dict:
+    """仅记录真正读到了数据的目录；最近使用去重后置顶。"""
+    cfg = load_config()
+    path = os.path.abspath(path)
+    cfg["last"] = path
+    recent = [p for p in cfg.get("recent", []) if os.path.normcase(p) != os.path.normcase(path)]
+    recent.insert(0, path)
+    cfg["recent"] = recent[:MAX_RECENT]
+    save_config(cfg)
+    return cfg
+
+
+def find_data_dirs(root: str, limit: int = 10, depth: int = 1) -> list[dict]:
+    """在 root 下（depth 层）找含 *.AWA 的目录，按最后修改时间倒序。"""
+    out: list[dict] = []
+
+    def walk(base: str, level: int):
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            return
+        for name in names:
+            p = os.path.join(base, name)
+            if not os.path.isdir(p) or name.startswith("."):
+                continue
+            try:
+                files = glob.glob(os.path.join(p, "*.AWA"))
+            except OSError:
+                files = []
+            if files:
+                try:
+                    newest = max(os.path.getmtime(f) for f in files)
+                except OSError:
+                    newest = 0
+                out.append(dict(path=os.path.abspath(p), name=name, count=len(files),
+                                mtime=time.strftime("%Y-%m-%d %H:%M",
+                                                    time.localtime(newest))))
+            elif level < depth:
+                walk(p, level + 1)
+
+    walk(root, 1)
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return out[:limit]
+
+
 def default_data_dir() -> str:
-    """数据目录优先级：上次使用 > 环境变量 > 上级目录（含 *.AWA）> 上上级。"""
-    for cand in (_read_last_dir(), ENV_DIR):
+    """上次使用 > 环境变量 > 从程序目录往上找含 *.AWA 的目录（含下一层）。"""
+    cfg_dir = load_config().get("last", "")
+    for cand in (cfg_dir, ENV_DIR):
         if cand and os.path.isdir(cand):
             return os.path.abspath(cand)
-    parent = os.path.dirname(HERE)
-    for cand in (parent, os.path.dirname(parent)):
-        if cand and os.path.isdir(cand) and glob.glob(os.path.join(cand, "*.AWA")):
-            return os.path.abspath(cand)
-    return parent
+    base = os.path.dirname(HERE)
+    for _ in range(4):                      # 逐级向上探测
+        if glob.glob(os.path.join(base, "*.AWA")):
+            return os.path.abspath(base)
+        found = find_data_dirs(base, limit=1)
+        if found:
+            return found[0]["path"]
+        parent = os.path.dirname(base)
+        if parent == base:
+            break
+        base = parent
+    return os.path.dirname(HERE)
+
+
+def pick_folder_dialog(initial: str = "") -> str:
+    """弹出系统文件夹选择框，返回所选目录；取消或环境不支持时返回空串。
+
+    服务跑在本机，所以对话框会出现在用户桌面上。
+    优先用 tkinter（Python 自带，最稳）；万一精简版 Python 没有 tkinter，
+    再退回 PowerShell 的 System.Windows.Forms。
+    """
+    if not (initial and os.path.isdir(initial)):
+        initial = os.path.expanduser("~")
+
+    if HAS_TK:
+        try:
+            root = Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askdirectory(parent=root, initialdir=initial,
+                                           title="选择本次测试数据所在的文件夹",
+                                           mustexist=True)
+            root.destroy()
+            return (path or "").strip()
+        except Exception:
+            pass
+
+    if not sys.platform.startswith("win"):
+        return ""
+    return _pick_folder_via_powershell(initial)
+
+
+def _pick_folder_via_powershell(initial: str) -> str:
+    """兜底方案：PowerShell + System.Windows.Forms，无需额外依赖。"""
+    out_file = os.path.join(HERE, ".pick.tmp")
+    try:
+        if os.path.exists(out_file):
+            os.remove(out_file)
+    except OSError:
+        pass
+
+    ps = (
+        "$ErrorActionPreference='Stop';"
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+        "$d.Description = '选择本次测试数据所在的文件夹';"
+        "$d.ShowNewFolderButton = $false;"
+        "$d.SelectedPath = $env:AWA_INIT;"
+        "$o = New-Object System.Windows.Forms.Form;"
+        "$o.TopMost = $true; $o.ShowInTaskbar = $false;"
+        "$o.WindowState = 'Minimized'; $o.Opacity = 0; $o.Show();"
+        "$r = $d.ShowDialog($o);"
+        "$o.Close(); $o.Dispose();"
+        "if ($r -eq [System.Windows.Forms.DialogResult]::OK) {"
+        "  $d.SelectedPath | Out-File -FilePath $env:AWA_OUT -Encoding utf8 };"
+    )
+    exe = (shutil.which("powershell") or shutil.which("pwsh")
+           or os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                           "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+    env = dict(os.environ, AWA_INIT=initial, AWA_OUT=out_file)
+    try:
+        subprocess.run([exe, "-NoProfile", "-STA", "-Command", ps],
+                       capture_output=True, timeout=600, env=env,
+                       creationflags=0x08000000)          # CREATE_NO_WINDOW
+    except Exception:
+        return ""
+    try:
+        with open(out_file, "r", encoding="utf-8-sig") as f:
+            picked = f.read().strip()
+        os.remove(out_file)
+        return picked
+    except OSError:
+        return ""
 
 
 ROOT_DEFAULT = default_data_dir()
@@ -316,9 +454,14 @@ class Store:
         self.records, self.errors = records, errors
         self.elapsed_ms = (time.perf_counter() - t0) * 1000
         self.scanned_at = time.time()
-        _write_last_dir(self.dir)
+
+        cfg = remember_dir(self.dir) if records else load_config()
+        # 没读到数据时，给出邻近可用目录，省得用户手动翻
+        suggest = [] if records else (find_data_dirs(self.dir) or
+                                      find_data_dirs(os.path.dirname(self.dir)))
         return dict(dir=self.dir, elapsedMs=round(self.elapsed_ms, 1),
                     files=len(records), errors=errors,
+                    recent=cfg.get("recent", []), suggest=suggest,
                     instrument=self._instrument())
 
     def _instrument(self) -> dict:
@@ -561,6 +704,16 @@ class Handler(BaseHTTPRequestHandler):
         path = u.path
 
         try:
+            if path == "/api/config":
+                cfg = load_config()
+                return self._json(dict(ok=True, dir=self.store.dir,
+                                       last=cfg.get("last", ""),
+                                       recent=cfg.get("recent", [])))
+
+            if path == "/api/pick-dir":
+                picked = pick_folder_dialog(self.store.dir)
+                return self._json(dict(ok=True, dir=picked))
+
             if path == "/api/scan":
                 info = self.store.scan(q.get("dir") or None)
                 info["ok"] = True

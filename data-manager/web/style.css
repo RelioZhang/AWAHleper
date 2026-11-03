@@ -21,6 +21,9 @@
 
 *{box-sizing:border-box;}
 
+/* 关键：作者样式的 display 会压过 UA 的 [hidden]，这里统一兜住 */
+[hidden]{display:none !important;}
+
 html,body{
   height:100%;
   margin:0;
@@ -452,7 +455,7 @@ tbody td.idx{color:var(--text-3);text-align:right;font-family:Consolas,monospace
   display:flex;
   align-items:center;
   justify-content:center;
-  z-index:50;
+  z-index:70;
 }
 .modal{
   width:560px;
@@ -516,6 +519,38 @@ tbody td.idx{color:var(--text-3);text-align:right;font-family:Consolas,monospace
   font-size:12.5px;
 }
 .btn:hover{border-color:#9dc3e3;color:var(--blue-deep);}
+.btn.primary{
+  border-color:#7fb4dd;
+  background:linear-gradient(180deg,#f2f9ff,#dcecfb);
+  color:#14538a;
+  font-weight:700;
+}
+.btn.primary:hover{background:linear-gradient(180deg,#eaf5ff,#cfe5f8);}
+.btn:disabled{opacity:.6;cursor:default;}
+
+.chiplist{display:flex;flex-wrap:wrap;gap:6px;}
+.dchip{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  max-width:100%;
+  padding:5px 10px;
+  border:1px solid #d5e2ee;
+  border-radius:3px;
+  background:linear-gradient(180deg,#ffffff,#f4f9fd);
+  font-size:12px;
+  color:#2f4a63;
+  text-align:left;
+}
+.dchip:hover{border-color:#8fbfe4;background:#eaf4fd;}
+.dchip b{
+  max-width:300px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:#1b5f98;
+}
+.dchip span{color:#93a2b1;font-size:11px;white-space:nowrap;}
 .modal-foot{
   display:flex;
   justify-content:flex-end;
