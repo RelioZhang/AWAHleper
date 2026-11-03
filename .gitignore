@@ -1,0 +1,24 @@
+# 数据文件不入库
+*.AWA
+*.AWA~*
+*.WAV
+*.wav
+*.xlsx
+*.xls
+*.csv
+*.pdf
+输出/
+图表/
+
+# 运行时产物
+.lastdir
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

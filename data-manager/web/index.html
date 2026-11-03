@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AWA 声学数据管理</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= 标题栏 ================= -->
+  <header class="titlebar">
+    <div class="tb-icon">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d="M4 20V10h3v10H4zm6 0V4h3v16h-3zm6 0v-7h3v7h-3z" fill="#fff" opacity=".92"/>
+      </svg>
+    </div>
+    <div class="tb-title">AWA 声学数据管理 <span class="ver">V1.0</span></div>
+    <div class="tb-note" id="tbNote">本地服务 · 127.0.0.1</div>
+    <div class="winbtns">
+      <button id="btnSetting" class="wb-text" title="设置数据目录">设置</button>
+      <span class="wb-sep"></span>
+      <button class="wb" data-win="min" title="浏览器内无法最小化窗口">─</button>
+      <button class="wb" data-win="max" title="浏览器内无法最大化窗口">□</button>
+      <button class="wb close" data-win="close" title="关闭浏览器标签页即可；服务窗口请在其控制台按 Ctrl+C">×</button>
+    </div>
+  </header>
+
+  <!-- ================= 模块栏 ================= -->
+  <nav class="modules">
+    <button class="mod active" data-mod="data">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <rect x="6" y="22" width="6" height="12" rx="1" fill="#4a9bd8"/>
+          <rect x="16" y="14" width="6" height="20" rx="1" fill="#2f7fbe"/>
+          <rect x="26" y="8" width="6" height="26" rx="1" fill="#8fc3e8"/>
+          <path d="M5 20l10-7 8 3 10-9" stroke="#e05a3a" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          <path d="M33 7h4v4" stroke="#e05a3a" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="ml">数据管理</span>
+    </button>
+    <button class="mod" data-mod="calib">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <path d="M14 16h-4a2 2 0 00-2 2v4a2 2 0 002 2h4l7 6V10l-7 6z" fill="#6f7f8f"/>
+          <path d="M26 15a7 7 0 010 10M30 11a12 12 0 010 18" stroke="#2f7fbe" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          <circle cx="12" cy="30" r="4" fill="#e0a33a"/>
+        </svg>
+      </span>
+      <span class="ml">校准管理</span>
+    </button>
+    <button class="mod" data-mod="info">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <path d="M4 12a2 2 0 012-2h9l3 3h16a2 2 0 012 2v15a2 2 0 01-2 2H6a2 2 0 01-2-2V12z" fill="#e8c15c"/>
+          <path d="M4 15h32v14a2 2 0 01-2 2H6a2 2 0 01-2-2V15z" fill="#f2d98a"/>
+          <rect x="10" y="20" width="20" height="2" fill="#b9922f" opacity=".55"/>
+          <rect x="10" y="25" width="13" height="2" fill="#b9922f" opacity=".35"/>
+        </svg>
+      </span>
+      <span class="ml">基本信息</span>
+    </button>
+    <button class="mod" data-mod="icon">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <circle cx="20" cy="20" r="11" fill="none" stroke="#8a97a6" stroke-width="3"/>
+          <circle cx="20" cy="20" r="4" fill="#8a97a6"/>
+          <g stroke="#8a97a6" stroke-width="3" stroke-linecap="round">
+            <path d="M20 5v4M20 31v4M5 20h4M31 20h4M9.5 9.5l3 3M27.5 27.5l3 3M30.5 9.5l-3 3M12.5 27.5l-3 3"/>
+          </g>
+        </svg>
+      </span>
+      <span class="ml">图标管理</span>
+    </button>
+    <button class="mod" data-mod="live">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <ellipse cx="20" cy="11" rx="12" ry="4.5" fill="#8fb8d8"/>
+          <path d="M8 11v7c0 2.5 5.4 4.5 12 4.5s12-2 12-4.5v-7" fill="#a9cbe4"/>
+          <path d="M8 18v7c0 2.5 5.4 4.5 12 4.5s12-2 12-4.5v-7" fill="#c7dced"/>
+          <path d="M24 27l6 7 3-3-6-6" fill="#4f9d4f"/>
+        </svg>
+      </span>
+      <span class="ml">实时监测</span>
+    </button>
+    <button class="mod" data-mod="template">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <rect x="8" y="7" width="11" height="12" rx="1.5" fill="#4f9bd8"/>
+          <rect x="21" y="7" width="11" height="12" rx="1.5" fill="#3fa96f"/>
+          <rect x="8" y="21" width="11" height="12" rx="1.5" fill="#e3a63a"/>
+          <rect x="21" y="21" width="11" height="12" rx="1.5" fill="#d1554d"/>
+        </svg>
+      </span>
+      <span class="ml">模板管理</span>
+    </button>
+    <div class="mod-spacer"></div>
+  </nav>
+
+  <!-- ================= 操作栏 ================= -->
+  <div class="actionbar">
+    <button id="btnRead" class="act primary">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <path d="M8 1v8m0 0L5 6m3 3l3-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <path d="M2 11v3h12v-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      </svg>
+      <span>数据读取</span>
+    </button>
+    <button id="btnExport" class="act">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <path d="M8 15V7m0 0L5 10m3-3l3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <path d="M2 5V2h12v3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      </svg>
+      <span>数据导出</span>
+    </button>
+    <button id="btnOpen" class="act">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <path d="M1.5 4.5A1 1 0 012.5 3.5h3l1 1.2h5.9a1 1 0 011 1v6.3a1 1 0 01-1 1h-10a1 1 0 01-1-1V4.5z"
+              stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/>
+      </svg>
+      <span>打开文件</span>
+    </button>
+    <button id="btnClear" class="act danger">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <span>数据清空</span>
+    </button>
+    <div class="ab-spacer"></div>
+    <div class="filterbox">
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" stroke="#8a97a6" stroke-width="1.4" fill="none"/>
+        <path d="M10.4 10.4L14 14" stroke="#8a97a6" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <input id="filter" type="text" placeholder="筛选测点名 / 文件名">
+    </div>
+  </div>
+
+  <!-- ================= 主体 ================= -->
+  <main class="body">
+
+    <!-- 左：数据分类 -->
+    <aside class="sidebar">
+      <div class="side-head">数据分类</div>
+      <ul id="catList" class="catlist"></ul>
+      <div class="side-foot">
+        <div class="sf-row"><span>仪器</span><b id="insModel">—</b></div>
+        <div class="sf-row"><span>编号</span><b id="insSerial">—</b></div>
+        <div class="sf-row"><span>量程</span><b id="insRange">—</b></div>
+      </div>
+    </aside>
+
+    <!-- 右：列表 + 曲线 + 图 -->
+    <section class="content">
+      <div class="tablewrap">
+        <table id="tbl">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="table-empty" id="tableEmpty" hidden></div>
+      </div>
+
+      <div class="curvebar" id="curvebar">
+        <div class="curve-stub">
+          <div class="cstub-head">曲线</div>
+          <div class="cstub-val" id="stubVal">SPL(Z) dB</div>
+        </div>
+        <!-- 5 条曲线由 JS 生成 -->
+      </div>
+
+      <div class="chartwrap">
+        <canvas id="chart"></canvas>
+        <div class="chart-empty" id="chartEmpty">点击上方列表中的文件，查看频谱曲线</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= 状态栏 ================= -->
+  <footer class="statusbar">
+    <span class="st-item" id="stDir">尚未读取数据</span>
+    <span class="st-spacer"></span>
+    <span class="st-item" id="stCount"></span>
+    <span class="st-item" id="stTime"></span>
+  </footer>
+</div>
+
+<!-- ================= 设置弹窗 ================= -->
+<div class="modal-mask" id="modal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <span>设置</span>
+      <button class="modal-x" id="modalClose">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="dirInput">数据目录</label>
+        <div class="field-row">
+          <input id="dirInput" type="text" spellcheck="false">
+          <button class="btn" id="btnApplyDir">读取该目录</button>
+        </div>
+        <div class="hint">默认读取本程序上一级目录（awa_files）。可直接粘贴任意绝对路径。</div>
+      </div>
+
+      <div class="field">
+        <label>支持的数据类型</label>
+        <div class="taglist">
+          <span class="tag ok">1/3 OCT (1_3_*.AWA)</span>
+          <span class="tag ok">OCT (OCT_*.AWA)</span>
+          <span class="tag ok">STA (STA_*.AWA)</span>
+          <span class="tag ok">NUM (NUM_*.AWA)</span>
+          <span class="tag dim">FFT / 24H / 瞬时：本批无</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>说明</label>
+        <div class="hint">
+          点击【数据读取】即扫描目录内全部 AWA 文件并解析（GBK、TAB 分隔）；WAV 录音不参与处理。<br>
+          单文件解析失败只记录错误，不影响其余文件；解析结果缓存在内存，切换分类不重复读盘。
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="modalOk">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<div class="loading" id="loading" hidden>
+  <div class="spinner"></div>
+  <div class="loading-text">正在读取数据…</div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
