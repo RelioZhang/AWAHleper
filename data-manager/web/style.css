@@ -1052,3 +1052,13 @@ body:not(.view-org) #btnBatch:hover{border-color:#cddced;color:#33506b;backgroun
 .content{position:relative;}
 /* 抽屉打开时，曲线区让位（表格保持在原位，只是底部被覆盖） */
 body.view-org .batch-drawer:not([hidden]) ~ .chartwrap{opacity:.35;}
+
+/* 整理视图 OCT：W_A / NR / NC 属于「评价值」列，用柔和绿色区分频带列 */
+#tbl td.matchext{background:#f4fbf6;}
+#tbl tbody tr:nth-child(even) td.matchext{background:#f0f8f2;}
+#tbl tbody tr:hover td.matchext{background:#e6f5ea;}
+#tbl.sticky-cols tbody tr.sel td.matchext{background:#d8ebfa;}
+#tbl thead th.matchhead{
+  background:linear-gradient(180deg,#f4fbf6 0%,#d8ecdf 100%);
+  color:#2c6b48;
+}

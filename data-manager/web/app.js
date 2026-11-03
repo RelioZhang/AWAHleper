@@ -24,6 +24,10 @@ const state = {
   instrument: {},
   headers: [],
   rows: [],
+  fields: [],
+  bandCols: [],
+  bandStart: -1,
+  extraStart: -1,
   kind: 'empty',
   note: '',
   filter: '',
@@ -32,7 +36,6 @@ const state = {
   cleared: false,
   recent: [],
   suggest: [],
-  fields: [],
   sort: { col: -1, dir: 1 },
   conds: [],
   editCount: 0,
@@ -238,7 +241,8 @@ async function loadTable(cat) {
   }
 
   try {
-    const j = await api('/api/table?cat=' + encodeURIComponent(cat));
+    const view = isEditMode() ? '&view=organize' : '';
+    const j = await api('/api/table?cat=' + encodeURIComponent(cat) + view);
     state.headers = j.headers;
     state.rows = j.rows;
     state.fields = j.fields || [];
@@ -246,6 +250,7 @@ async function loadTable(cat) {
     state.note = j.note;
     state.bandCols = j.bandCols || [];
     state.bandStart = (typeof j.bandStart === 'number') ? j.bandStart : -1;
+    state.extraStart = (typeof j.extraStart === 'number') ? j.extraStart : -1;
     state.selectedFile = null;
     state.detail = null;
     state.editCount = j.editCount || 0;
@@ -441,7 +446,10 @@ function renderTable(emptyMsg) {
     th.appendChild(grip);
 
     if (sorted) th.classList.add('sorted');
-    if (state.bandStart >= 0 && ci >= state.bandStart) th.classList.add('bandhead');
+    if (state.bandStart >= 0 && ci >= state.bandStart) {
+      const isExtra = state.extraStart >= 0 && ci >= state.extraStart;
+      th.classList.add(isExtra ? 'matchhead' : 'bandhead');
+    }
     th.addEventListener('click', ev => {
       if (ev.target === grip) return;
       toggleSort(ci);
@@ -486,7 +494,10 @@ function renderTable(emptyMsg) {
       const td = document.createElement('td');
       const txt = String(cell ?? '');
       if (ci === 0) td.className = 'idx';
-      else if (state.bandStart >= 0 && ci >= state.bandStart) td.classList.add('bandcell');
+      else if (state.bandStart >= 0 && ci >= state.bandStart) {
+        const isExtra = state.extraStart >= 0 && ci >= state.extraStart;
+        td.classList.add(isExtra ? 'matchext' : 'bandcell');
+      }
       else if (txt !== '' && /^-?\d+(\.\d+)?$/.test(txt)) td.className = 'num';
       td.textContent = txt;
       td.title = txt;
@@ -1536,7 +1547,8 @@ function switchModule(mod) {
   } else {
     $('#btnBatch').style.display = '';
   }
-  renderTable();
+  // 两种视图的列不同（原始看全部频带，整理只看关注区间），需重新取表
+  if (!state.cleared) loadTable(state.cat);
   updateBatchUI();
 }
 

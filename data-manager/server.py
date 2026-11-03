@@ -303,6 +303,8 @@ def apply_edits(rec: dict, edits: dict) -> dict:
     out["metrics"] = {m: {norm_band(k): v for k, v in b.items()}
                       for m, b in rec.get("metrics", {}).items()}
     out["spl"] = {m: dict(v) for m, v in rec.get("spl", {}).items()}
+    out["wa"] = {m: dict(v) for m, v in rec.get("wa", {}).items()}
+    out["rating"] = {m: dict(v) for m, v in rec.get("rating", {}).items()}
     out["stats"] = {m: dict(v) for m, v in rec.get("stats", {}).items()}
     out["_edits"] = sorted(edits.keys())
 
@@ -315,6 +317,10 @@ def apply_edits(rec: dict, edits: dict) -> dict:
                 out["spl"].setdefault(parts[1], {})[parts[2]] = val
             elif parts[0] == "stat" and len(parts) == 3:
                 out["stats"].setdefault(parts[1], {})[parts[2]] = val
+            elif parts[0] == "wa" and len(parts) == 3:
+                out["wa"].setdefault(parts[1], {})[parts[2]] = val
+            elif parts[0] == "rating" and len(parts) == 3:
+                out["rating"].setdefault(parts[1], {})[parts[2]] = val
             elif parts[0] == "band" and len(parts) == 3:
                 bands = out["metrics"].setdefault(parts[1], {})
                 key = norm_band(parts[2])
@@ -381,7 +387,8 @@ def parse_awa(path: str) -> dict:
     lines = raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     name = os.path.basename(path)
     rec = dict(file=name, kind="?", point="", date="", time="", ts="", mode="",
-               bands={}, metrics={}, spl={}, stats={}, dist=[], rows=0,
+               bands={}, metrics={}, spl={}, wa={}, rating={}, stats={},
+               dist=[], rows=0,
                model="", serial="", range_="", weight="", calibrate="")
     rec["rows"] = len([x for x in lines if x.strip()])
 
@@ -446,9 +453,12 @@ def parse_awa(path: str) -> dict:
     for j, h in enumerate(headers):
         h2 = h.upper().replace(" ", "")
         if h2.startswith("SPL(") and h2.endswith(")"):
-            spl_cols[j] = h2[4:-1]
+            spl_cols[j] = ("A", h2[4:-1])          # SPL(A) 计权声级
         elif h2.startswith("W_") and len(h2) == 3:
-            spl_cols[j] = h2[2:]
+            spl_cols[j] = ("WA", h2[2:])           # W_A / W_C / W_Z 计权总值
+        elif h2 in ("NR", "NC", "RC", "W_NR", "W_NC"):
+            key = h2.replace("W_", "")
+            spl_cols[j] = ("RATING", key)          # NR / NC 评价数
 
     boundary = max(i_point, i_metric, i_ts, i_date, i_time, i_mode)
     stat_cols = {}
@@ -498,12 +508,19 @@ def parse_awa(path: str) -> dict:
                 v = num(cols[j])
                 if v is not None:
                     bands[norm_band(f)] = v
-        spl = {}
-        for j, k in spl_cols.items():
-            if j < len(cols):
-                v = num(cols[j])
-                if v is not None:
-                    spl[k] = v
+        spl, wa, rating = {}, {}, {}
+        for j, (grp, k) in spl_cols.items():
+            if j >= len(cols):
+                continue
+            v = num(cols[j])
+            if v is None:
+                continue
+            if grp == "A":
+                spl[k] = v                       # SPL(A/C/Z/U/T/B)
+            elif grp == "WA":
+                wa[k] = v                        # W_A / W_C / W_Z
+            else:
+                rating[k] = v                    # NR / NC
         stats = {}
         for j, nm in stat_cols.items():
             if j < len(cols):
@@ -514,6 +531,10 @@ def parse_awa(path: str) -> dict:
             rec["metrics"][metric] = bands
         if spl:
             rec["spl"][metric] = spl
+        if wa:
+            rec["wa"][metric] = wa
+        if rating:
+            rec["rating"][metric] = rating
         if stats:
             rec["stats"][metric] = stats
 
@@ -522,7 +543,7 @@ def parse_awa(path: str) -> dict:
     rec["_row"] = hidx + 2                      # 人看行号：表头是第 hidx+1 行
     rec["_cols"] = dict(
         bands={norm_band(f): j for j, f in freq_cols.items()},
-        spl={k: j for j, k in spl_cols.items()},
+        spl={f"{g}:{k}": j for j, (g, k) in spl_cols.items()},
         stats={nm: j for j, nm in stat_cols.items()},
         point=i_point, date=i_date, time=i_time,
     )
@@ -582,7 +603,8 @@ class Store:
                 errors.append(f"{name}：{e}")
                 records[name] = dict(file=name, kind="ERR", point="", date="",
                                      time="", ts="", mode="", bands={},
-                                     metrics={}, spl={}, stats={}, dist=[],
+                                     metrics={}, spl={}, wa={}, rating={},
+                                     stats={}, dist=[],
                                      rows=0, error=str(e))
         self.records, self.errors = records, errors
         self.edits = EditStore(self.dir)             # 每个数据目录各自的侧车
@@ -636,7 +658,118 @@ class Store:
         """原始解析结果 + 侧车编辑。"""
         return apply_edits(r, self.edits.data.get(r["file"], {}))
 
-    def table(self, cat: str) -> dict:
+    # 原始视图显示全部频带；整理视图按现场习惯只留关注区间
+    VIEW_BANDS = {
+        "13OCT": {"lo": 100, "hi": 5000},      # 1/3OCT: 100Hz ~ 5kHz
+        "OCT": {"lo": 63, "hi": 8000},         # OCT: 63Hz ~ 8kHz
+    }
+
+    def _spectrum_table(self, cat: str, organize: bool) -> dict:
+        """1/3OCT 与 OCT 的表格。
+
+        organize=True 为数据整理视图，按现场汇报口径精简：
+          1/3OCT → SPL(A) + 100Hz~5kHz 频带
+          OCT    → SPL(A) + 63Hz~8kHz 频带 + W_A + NR + NC
+        organize=False 为原始数据视图，完整展示所有频带与全部总值列。
+        """
+        kind = "1/3OCT" if cat == "13OCT" else "OCT"
+        files = [r for r in self._sorted() if r["kind"] == kind]
+        win = self.VIEW_BANDS.get(cat, {}) if organize else {}
+
+        # 这一类文件用的是 SPL(x) 还是 W_x？决定取值与编辑路径
+        spl_keys = set()
+        for r in files:
+            for m in r.get("spl", {}).values():
+                spl_keys.update(m.keys())
+
+        # ---- 频带列 ----
+        all_bands = sorted(
+            {norm_band(b) for r in files for b in r["metrics"].get("Leq,T", {})},
+            key=float)
+        if win:
+            band_list = [b for b in all_bands
+                         if win["lo"] <= float(b) <= win["hi"]]
+        else:
+            band_list = all_bands
+
+        # ---- 表头 ----
+        headers = [("序号", 58), ("文件名", 150), ("测点名", 124), ("测试日期", 104),
+                   ("测试时间", 92), ("经历时间", 96)]
+        tail = []                       # [(表头, 宽度, 取值函数, 编辑路径)]
+        f = self._f
+
+        def add_spl(key, label, width=70):
+            # OCT 文件没有 SPL(x) 列，只有 W_x，取值时依次回退
+            def get(v, k=key):
+                spl = v["spl"].get("Leq,T", {})
+                if k in spl:
+                    return f(spl[k])
+                return f(v["wa"].get("Leq,T", {}).get(k))
+            path = ("spl" if key in spl_keys else "wa") + f":Leq,T:{key}"
+            tail.append((label, width, get, path))
+
+        if organize and cat == "13OCT":
+            add_spl("A", "SPL(A)", 74)
+        elif organize:                                   # OCT
+            add_spl("A", "SPL(A)", 70)
+        else:                                            # 原始视图：完整
+            for k, lbl in (("A", "SPL(A)"), ("C", "SPL(C)"), ("Z", "SPL(Z)"),
+                           ("U", "SPL(U)"), ("T", "SPL(T)"), ("B", "SPL(B)")):
+                add_spl(k, lbl, 68)
+            tail.append(("Leq,T (A)", 78,
+                         lambda v: f(v["spl"].get("Leq,T", {}).get("A")),
+                         "spl:Leq,T:A"))
+
+        # 先把 tail 中已有的列（SPL 等）并入表头，再确定频带起始列
+        for item in tail:
+            headers.append((item[0], item[1]))
+        band_start = len(headers)
+        for b in band_list:
+            headers.append((band_label(b), 66))
+            tail.append((None, 66,
+                         lambda v, bb=b: f(v["metrics"].get("Leq,T", {}).get(bb)),
+                         f"band:Leq,T:{b}"))
+
+        # 末尾补 W_A / NR / NC：原始视图总是全给，整理视图仅 OCT 需要
+        extra_start = band_start + len(band_list)
+        # 1/3OCT 文件本身不含 W_x / NR / NC 列，只有 OCT 文件有
+        has_wa = cat == "OCT"
+        if has_wa:
+            wa_keys = [("A", "W_A")] if organize else [("A", "W_A"), ("C", "W_C"), ("Z", "W_Z")]
+            for wk, wlbl in wa_keys:
+                headers.append((wlbl, 62))
+                tail.append((wlbl, 62,
+                             lambda v, k=wk: f(v["wa"].get("Leq,T", {}).get(k)),
+                             f"wa:Leq,T:{wk}"))
+            for k in ("NR", "NC"):
+                headers.append((k, 56))
+                tail.append((k, 56,
+                             lambda v, kk=k: f(v["rating"].get("Leq,T", {}).get(kk)),
+                             f"rating:Leq,T:{k}"))
+
+        # ---- 数据行 ----
+        rows, fields = [], []
+        for i, r in enumerate(files, 1):
+            v = self._view(r)
+            row = [str(i), r["file"], v["point"], v["date"], v["time"], v["ts"]]
+            row += [item[2](v) for item in tail]
+            rows.append(row)
+
+            cells = {2: dict(p="point", t="text", one="group"),
+                     3: dict(p="date", t="text", one="group"),
+                     4: dict(p="time", t="text", one="group")}
+            for j, item in enumerate(tail):
+                cells[band_start + j] = dict(p=item[3], t="num")
+            fields.append(cells)
+
+        scope = (f"{band_label(win['lo'])}~{band_label(win['hi'])}"
+                 if win else f"全部 {len(band_list)} 个频带")
+        note = f"共 {len(files)} 份 {kind} 文件；{'整理视图' if organize else '原始视图'}，{scope}"
+        return dict(headers=headers, rows=rows, fields=fields, kind="spectrum",
+                    bandCols=band_list, bandStart=band_start,
+                    extraStart=extra_start, note=note)
+
+    def table(self, cat: str, organize: bool = False) -> dict:
         """返回表头、行数据与「可编辑单元格」映射。
 
         fields[i][j] 描述第 i 行第 j 列能否编辑及其字段路径：
@@ -647,43 +780,7 @@ class Store:
         """
         self.ensure()
         if cat in ("13OCT", "OCT"):
-            kind = "1/3OCT" if cat == "13OCT" else "OCT"
-            files = [r for r in self._sorted() if r["kind"] == kind]
-            headers = [
-                ("序号", 58), ("文件名", 150), ("测点名", 124), ("测试日期", 104),
-                ("测试时间", 92), ("经历时间", 96), ("SPL(A)", 68),
-                ("SPL(C)", 68), ("SPL(Z)", 68), ("Leq,T (A)", 78),
-            ]
-            # 频带列：按本分类实际出现的频带展开，每个频带一列（Leq,T 的 1/3 或 1/1 倍频程值）
-            band_list = sorted(
-                {norm_band(b) for r in files for b in r["metrics"].get("Leq,T", {})},
-                key=float)
-            for f in band_list:
-                headers.append((band_label(f), 62))
-            band_start = 10
-            rows, fields = [], []
-            for i, r in enumerate(files, 1):
-                v = self._view(r)
-                spl = v["spl"].get("Leq,T", {})
-                bands = v["metrics"].get("Leq,T", {})
-                rows.append([str(i), r["file"], v["point"], v["date"], v["time"],
-                             v["ts"], self._f(spl.get("A")), self._f(spl.get("C")),
-                             self._f(spl.get("Z")), self._f(spl.get("A"))] +
-                            [self._f(bands.get(b)) for b in band_list])
-                cells = {2: dict(p="point", t="text", one="group"),
-                         3: dict(p="date", t="text", one="group"),
-                         4: dict(p="time", t="text", one="group")}
-                for col, key in ((6, "A"), (7, "C"), (8, "Z"), (9, "A")):
-                    cells[col] = dict(p=f"spl:Leq,T:{key}", t="num")
-                for j, b in enumerate(band_list):
-                    if b in bands:
-                        cells[band_start + j] = dict(p=f"band:Leq,T:{b}", t="num")
-                fields.append(cells)
-            note = (f"共 {len(files)} 份 {kind} 文件，每份含 5 行统计量；"
-                    f"右侧 {len(band_list)} 列为 Leq,T 各频带声压级")
-            return dict(headers=headers, rows=rows, fields=fields,
-                        kind="spectrum", bandCols=band_list, bandStart=band_start,
-                        note=note)
+            return self._spectrum_table(cat, organize)
 
         if cat == "STA":
             files = [r for r in self._sorted() if r["kind"] == "STA"]
@@ -838,7 +935,8 @@ class Store:
         if name not in self.records:
             raise ValueError(f"未找到文件：{name}")
         head = path.split(":")[0]
-        if head not in ("point", "date", "time", "spl", "stat", "band", "dist"):
+        if head not in ("point", "date", "time", "spl", "stat", "band",
+                        "dist", "wa", "rating"):
             raise ValueError(f"该字段不支持编辑：{path}")
 
         if head in ("point", "date", "time"):
@@ -960,9 +1058,10 @@ class Store:
 
 
 # ============================================================ 导出 ===
-def build_export(cat: str, store: Store, keep: list[list[str]] | None = None):
+def build_export(cat: str, store: Store, keep: list[list[str]] | None = None,
+                 organize: bool = False):
     """keep 不为 None 时只导出这些行（按文件名集合过滤，供整理模块按条件导出）。"""
-    data = store.table(cat)
+    data = store.table(cat, organize=organize)
     if keep is not None:
         wanted = {r[1] for r in keep} if keep and isinstance(keep[0], list) else set(keep)
         data["rows"] = [r for r in data["rows"] if r[1] in wanted]
@@ -1107,9 +1206,11 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/table":
                 cat = q.get("cat", "13OCT")
-                data = self.store.table(cat)
+                organize = q.get("view") == "organize"
+                data = self.store.table(cat, organize=organize)
                 data["ok"] = True
                 data["cat"] = cat
+                data["organize"] = organize
                 data["editCount"] = self.store.edits.count()
                 return self._json(data)
 
@@ -1136,7 +1237,8 @@ class Handler(BaseHTTPRequestHandler):
                 keep = None
                 if q.get("files"):
                     keep = [f for f in q["files"].split(",") if f]
-                body, fname, ctype = build_export(cat, self.store, keep)
+                body, fname, ctype = build_export(
+                    cat, self.store, keep, organize=(q.get("view") == "organize"))
                 return self._send(body, ctype, 200, {
                     "Content-Disposition":
                         f"attachment; filename*=UTF-8''{urllib.parse.quote(fname)}"})
