@@ -1,0 +1,8 @@
+# 桌面版与打包所需依赖
+# 安装：pip install -r requirements.txt
+#
+# 注意：server.py（网页版）只用标准库，不需要这些依赖。
+# openpyxl 为可选，装了就导出 .xlsx，没装自动回退 .csv。
+
+PySide6>=6.6
+openpyxl>=3.1
