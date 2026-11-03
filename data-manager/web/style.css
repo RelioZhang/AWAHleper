@@ -667,17 +667,34 @@ tbody td.dirty-flash{animation:dirtyflash .8s ease-out;}
 td .cell-input{
   width:100%;
   height:21px;
+  min-height:21px;
   padding:0 4px;
   border:1px solid var(--blue);
   border-radius:2px;
   outline:none;
   font:inherit;
   font-size:12.5px;
+  line-height:19px;
   color:var(--text);
   background:#fff;
   box-shadow:0 0 0 2px rgba(43,127,196,.15);
+  resize:none;
+  overflow:hidden;
+  white-space:nowrap;
+  vertical-align:top;
 }
 table td.num .cell-input{text-align:right;}
+/* 正在编辑的单元格：整格浮起，避免被行高裁切 */
+tbody td.editing{
+  position:relative;
+  z-index:6;
+  overflow:visible;
+  background:#fff !important;
+  box-shadow:0 0 0 1px var(--blue), 0 2px 8px rgba(30,60,90,.16);
+}
+tbody td.editing .cell-input{white-space:pre;}
+/* 可编辑单元格：悬停提示可点 */
+tbody td.editable{cursor:text;}
 
 .act-badge{
   min-width:15px;

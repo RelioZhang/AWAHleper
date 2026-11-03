@@ -540,15 +540,15 @@ function renderTable(emptyMsg) {
         // 只有整理模式才允许就地编辑；原始数据保持只读
         if (isEditMode()) {
           td.classList.add('editable');
+          td.dataset.cellCi = ci;
           if (f.one === 'group') td.classList.add('grp');
           td.title = f.one === 'group'
-            ? `${txt}　（双击修改，同步到同编号的 1/3OCT·OCT·STA·NUM 文件）`
-            : `${txt}　（双击或直接输入可修改）`;
+            ? `${txt}　（单击修改，Tab 跳到下一格，同步到同编号的 1/3OCT·OCT·STA·NUM 文件）`
+            : `${txt}　（单击修改，Tab 跳到下一格）`;
+          // 单击即进入编辑，同时仍选中该行（便于看曲线）
           td.addEventListener('click', ev => {
-            if (td.querySelector('input')) ev.stopPropagation();
-          });
-          td.addEventListener('dblclick', ev => {
             ev.stopPropagation();
+            selectRow(idx);
             beginEdit(td, idx, ci, f, txt);
           });
         } else if (isDirty) {
@@ -672,40 +672,222 @@ function toggleSort(ci) {
 }
 
 /* ---------- 单元格就地编辑 ---------- */
+/* 编辑中的状态，供 Tab 跳格使用 */
+let editing = null;   // { idx, ci }
+
+/* 找到下一个可编辑单元格；dir=1 向后，-1 向前（跳过只读列与频带以外的列） */
+function nextEditableCell(idx, ci, dir) {
+  const rows = visibleRows();
+  const total = rows.length;
+  if (!total) return null;
+  let ri = rows.indexOf(state.rows[idx]);
+  if (ri < 0) ri = 0;
+  let c = ci;
+
+  for (let step = 0; step < 4000; step++) {
+    c += dir;
+    if (c >= state.headers.length) {
+      c = 0;
+      ri += 1;
+      if (ri >= total) return null;
+    } else if (c < 0) {
+      c = state.headers.length - 1;
+      ri -= 1;
+      if (ri < 0) return null;
+    }
+    const row = rows[ri];
+    const i = state.rows.indexOf(row);
+    const f = (state.fields[i] || {})[c];
+    if (f && !f.ro && (f.t === 'tag' || f.t === 'num' || f.t === 'text')) {
+      return { idx: i, ci: c, field: f };
+    }
+  }
+  return null;
+}
+
 function beginEdit(td, idx, ci, field, cur) {
-  if (td.querySelector('input')) return;
-  const input = document.createElement('input');
-  input.className = 'cell-input';
-  input.type = 'text';
-  input.value = cur === '—' ? '' : cur;
-  if (field.t === 'num') input.inputMode = 'decimal';
+  if (editing && editing.idx === idx && editing.ci === ci) return;
+
+  // 已有一格在编辑就先提交它，避免丢改动
+  if (editing) {
+    const prev = document.querySelector('.cell-input');
+    if (prev) prev.blur();
+  }
+
+  const tagCell = field.t === 'tag';
+  let input;
+
+  if (tagCell) {
+    input = document.createElement('select');
+    input.className = 'cell-input';
+    [['', '—'], ['噪声级', '噪声级'], ['隔声', '隔声']].forEach(([v, lb]) => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = lb;
+      if (v === cur) o.selected = true;
+      input.appendChild(o);
+    });
+  } else {
+    // textarea 才能容纳多行粘贴（从 Excel 拷一列过来也不会被截断）
+    input = document.createElement('textarea');
+    input.className = 'cell-input';
+    input.rows = 1;
+    input.spellcheck = false;
+    input.value = cur === '—' ? '' : String(cur);
+    if (field.t === 'num') input.inputMode = 'decimal';
+  }
+
   td.textContent = '';
+  td.classList.add('editing');
   td.appendChild(input);
+  editing = { idx, ci };
+
   input.focus();
-  input.select();
+  if (!tagCell) input.select();
 
   let done = false;
 
   const cancel = () => {
     if (done) return;
     done = true;
+    editing = null;
     renderTable();
   };
 
-  const commit = async () => {
+  const commit = async (dir = 0) => {
     if (done) return;
-    const val = input.value.trim();
-    if (val === (cur === '—' ? '' : cur)) return cancel();
+    const raw = input.value;
+    const val = String(raw).trim().replace(/\s+/g, ' ');
+    const before = cur === '—' ? '' : String(cur ?? '');
     done = true;
+    const target = dir ? nextEditableCell(idx, ci, dir) : null;
+
+    if (val === before) {
+      editing = null;
+      renderTable();
+      if (target) focusCell(target);
+      return;
+    }
     await saveCell(idx, ci, field, val, cur);
+    if (target) focusCell(target);
   };
 
+  if (!tagCell) {
+    input.addEventListener('paste', ev => {
+      if (handlePasteCells(ev, idx, ci, field)) {
+        done = true;
+        editing = null;
+        renderTable();
+      }
+    });
+  }
+
   input.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-    else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
-    else if (ev.key === 'Tab') { ev.preventDefault(); commit(); }
+    // 选择框里用方向键切换，不拦截
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      commit(0);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      cancel();
+    } else if (ev.key === 'Tab') {
+      // Tab / Shift+Tab 提交并跳到相邻可编辑格
+      ev.preventDefault();
+      commit(ev.shiftKey ? -1 : 1);
+    }
   });
-  input.addEventListener('blur', () => { if (!done) commit(); });
+
+  if (tagCell) {
+    input.addEventListener('change', () => commit(0));
+  }
+  input.addEventListener('blur', () => { if (!done) commit(0); });
+}
+
+/* ---------- 粘贴多行：从 Excel 拷一列过来，自动往下填 ---------- */
+function handlePasteCells(ev, idx, ci, field) {
+  const text = (ev.clipboardData || window.clipboardData)?.getData('text') || '';
+  if (!text) return false;
+  // 单值：交给浏览器默认行为
+  const lines = text.replace(/\r\n|\r/g, '\n').split('\n').filter(x => x !== '');
+  if (lines.length <= 1) return false;
+  ev.preventDefault();
+
+  const rows = visibleRows();
+  let ri = rows.indexOf(state.rows[idx]);
+  if (ri < 0) return true;
+
+  // 先收集要写的行，再串行提交（避免逐次重绘导致后续定位失败）
+  const jobs = [];
+  for (let k = 0; k < lines.length && ri + k < rows.length; k++) {
+    const target = state.rows.indexOf(rows[ri + k]);
+    const tf = (state.fields[target] || {})[ci] || field;
+    jobs.push({ idx: target, field: tf, value: lines[k].trim(),
+                old: state.rows[target][ci] });
+  }
+  (async () => {
+    for (const job of jobs) {
+      try {
+        await postJSON('/api/edit', {
+          file: state.rows[job.idx][1], path: job.field.p, value: job.value,
+        });
+        const shown = job.field.t === 'num'
+          ? (job.value === '' ? '—' : Number(job.value).toFixed(1))
+          : job.value;
+        // 元数据要同步到同组其他行
+        const gid = groupIdOf(state.rows[job.idx][1]);
+        state.rows.forEach((r, i) => {
+          if (i === job.idx || (job.field.one === 'group' && groupIdOf(r[1]) === gid)) {
+            r[ci] = shown;
+          }
+        });
+      } catch (e) { /* 单行失败不阻断其余 */ }
+    }
+    state.cache.clear();
+    state.detail = null;
+    renderTable();
+    if (state.selectedFile) await loadDetail(state.selectedFile);
+    toast(`已粘贴 ${jobs.length} 行到「${state.headers[ci][0]}」列`, 2400);
+  })();
+  return true;
+}
+
+/* 编辑完成后把焦点交给下一格（需等表格重绘完） */
+function focusCell(target) {
+  requestAnimationFrame(() => {
+    const tr = document.querySelector(`#tbl tbody tr[data-i="${target.idx}"]`);
+    if (!tr) return;
+    const td = tr.children[cellIndexInDom(target.ci)];
+    if (!td) return;
+    td.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    beginEdit(td, target.idx, target.ci, target.field,
+              td.textContent.trim());
+  });
+}
+
+/* 键盘直接输入：停在某格时敲字符即进入编辑（Excel 手感） */
+document.addEventListener('keydown', ev => {
+  if (!isEditMode()) return;
+  if (document.querySelector('.cell-input')) return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (ev.key.length !== 1) return;
+  const el = document.activeElement;
+  if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+  const td = el && el.closest ? el.closest('#tbl td.editable') : null;
+  if (!td) return;
+  const tr = td.parentElement;
+  const idx = Number(tr.dataset.i);
+  const ci = Number(td.dataset.cellCi);
+  const f = (state.fields[idx] || {})[ci];
+  if (!f) return;
+  ev.preventDefault();
+  beginEdit(td, idx, ci, f, td.textContent.trim());
+  const input = td.querySelector('.cell-input');
+  if (input) { input.value = ev.key; }
+});
+
+/* 因为整理模式多了勾选列，DOM 里的列号会整体右移一位 */
+function cellIndexInDom(ci) {
+  return isEditMode() ? ci + 1 : ci;
 }
 
 /* 测量组：同一编号的 1_3_/OCT_/STA_/NUM_ 是同一次测量，元数据需同步 */
