@@ -911,3 +911,35 @@ body.chart-collapsed .chart-expand-hint{display:flex;}
   line-height:14px;
   letter-spacing:0;
 }
+
+/* ================= 宽表：固定前两列 ================= */
+/* 1/3OCT 表有 43 列，横向滚动时序号和文件名必须一直可见 */
+#tbl.sticky-cols th:nth-child(1),
+#tbl.sticky-cols td:nth-child(1){position:sticky;left:0;z-index:4;}
+#tbl.sticky-cols th:nth-child(2),
+#tbl.sticky-cols td:nth-child(2){position:sticky;left:var(--idx-w,58px);z-index:4;}
+#tbl.sticky-cols thead th:nth-child(1),
+#tbl.sticky-cols thead th:nth-child(2){z-index:7;}
+#tbl.sticky-cols td:nth-child(1),
+#tbl.sticky-cols td:nth-child(2){background:#fff;}
+#tbl.sticky-cols tbody tr:nth-child(even) td:nth-child(1),
+#tbl.sticky-cols tbody tr:nth-child(even) td:nth-child(2){background:#fbfdff;}
+#tbl.sticky-cols tbody tr:hover td:nth-child(1),
+#tbl.sticky-cols tbody tr:hover td:nth-child(2){background:#eef6fd;}
+#tbl.sticky-cols tbody tr.sel td:nth-child(1),
+#tbl.sticky-cols tbody tr.sel td:nth-child(2){background:#d8ebfa;}
+#tbl.sticky-cols th:nth-child(2),
+#tbl.sticky-cols td:nth-child(2){
+  box-shadow:2px 0 4px -2px rgba(30,60,90,.18);
+  border-right:1px solid #cfdbe6;
+}
+
+/* 频带列：淡蓝底，与前面的汇总列在视觉上区分开 */
+#tbl td.bandcell{background:#f7fbff;}
+#tbl tbody tr:nth-child(even) td.bandcell{background:#f4f9ff;}
+#tbl tbody tr:hover td.bandcell{background:#e8f3fd;}
+#tbl.sticky-cols tbody tr.sel td.bandcell{background:#d8ebfa;}
+#tbl thead th.bandhead{
+  background:linear-gradient(180deg,#f2f9ff 0%,#dcecf9 100%);
+  color:#2b6a99;
+}

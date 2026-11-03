@@ -243,6 +243,8 @@ async function loadTable(cat) {
     state.fields = j.fields || [];
     state.kind = j.kind;
     state.note = j.note;
+    state.bandCols = j.bandCols || [];
+    state.bandStart = (typeof j.bandStart === 'number') ? j.bandStart : -1;
     state.selectedFile = null;
     state.detail = null;
     state.editCount = j.editCount || 0;
@@ -383,6 +385,11 @@ function renderTable(emptyMsg) {
   const totalW = state.headers.reduce(
     (sum, [label, w]) => sum + colWidth(state.cat, label, w), 0);
   $('#tbl').style.minWidth = totalW ? totalW + 'px' : '0';
+  // 列多时固定序号与文件名，横向滚动不丢定位
+  const tblEl = $('#tbl');
+  const firstW = state.headers.length ? colWidth(state.cat, state.headers[0][0], state.headers[0][1]) : 58;
+  tblEl.classList.toggle('sticky-cols', state.headers.length > 12);
+  tblEl.style.setProperty('--idx-w', firstW + 'px');
   requestAnimationFrame(updateHScrollTip);
 
   state.headers.forEach(([label, w], ci) => {
@@ -411,6 +418,7 @@ function renderTable(emptyMsg) {
     th.appendChild(grip);
 
     if (sorted) th.classList.add('sorted');
+    if (state.bandStart >= 0 && ci >= state.bandStart) th.classList.add('bandhead');
     th.addEventListener('click', ev => {
       if (ev.target === grip) return;
       toggleSort(ci);
@@ -430,6 +438,7 @@ function renderTable(emptyMsg) {
       const td = document.createElement('td');
       const txt = String(cell ?? '');
       if (ci === 0) td.className = 'idx';
+      else if (state.bandStart >= 0 && ci >= state.bandStart) td.classList.add('bandcell');
       else if (txt !== '' && /^-?\d+(\.\d+)?$/.test(txt)) td.className = 'num';
       td.textContent = txt;
       td.title = txt;

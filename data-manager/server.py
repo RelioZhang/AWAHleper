@@ -266,6 +266,22 @@ class EditStore:
         return sum(len(v) for v in self.data.values())
 
 
+def band_label(key: str) -> str:
+    """频带表头：1000 -> 1kHz，1250 -> 1.25kHz，12500 -> 12.5kHz，31.5 -> 31.5Hz。
+
+    注意 1/3 倍频程里有 1.25k / 2.5k / 3.15k 这类两位数小数，
+    只保留一位会错写成 1.2k / 3.1k，所以去掉多余的 0 即可，不截断。
+    """
+    try:
+        f = float(key)
+    except ValueError:
+        return str(key)
+    if f >= 1000:
+        v = f / 1000.0
+        return (f"{v:.4f}".rstrip("0").rstrip(".")) + "kHz"
+    return (f"{f:.2f}".rstrip("0").rstrip(".")) + "Hz"
+
+
 def norm_band(key) -> str:
     """频带键统一成「整数不带小数点」：1000.0 -> 1000，31.5 -> 31.5。
 
@@ -638,21 +654,36 @@ class Store:
                 ("测试时间", 92), ("经历时间", 96), ("SPL(A)", 68),
                 ("SPL(C)", 68), ("SPL(Z)", 68), ("Leq,T (A)", 78),
             ]
+            # 频带列：按本分类实际出现的频带展开，每个频带一列（Leq,T 的 1/3 或 1/1 倍频程值）
+            band_list = sorted(
+                {norm_band(b) for r in files for b in r["metrics"].get("Leq,T", {})},
+                key=float)
+            for f in band_list:
+                headers.append((band_label(f), 62))
+            band_start = 10
             rows, fields = [], []
             for i, r in enumerate(files, 1):
                 v = self._view(r)
                 spl = v["spl"].get("Leq,T", {})
+                bands = v["metrics"].get("Leq,T", {})
                 rows.append([str(i), r["file"], v["point"], v["date"], v["time"],
                              v["ts"], self._f(spl.get("A")), self._f(spl.get("C")),
-                             self._f(spl.get("Z")), self._f(spl.get("A"))])
+                             self._f(spl.get("Z")), self._f(spl.get("A"))] +
+                            [self._f(bands.get(b)) for b in band_list])
                 cells = {2: dict(p="point", t="text", one="group"),
                          3: dict(p="date", t="text", one="group"),
                          4: dict(p="time", t="text", one="group")}
                 for col, key in ((6, "A"), (7, "C"), (8, "Z"), (9, "A")):
                     cells[col] = dict(p=f"spl:Leq,T:{key}", t="num")
+                for j, b in enumerate(band_list):
+                    if b in bands:
+                        cells[band_start + j] = dict(p=f"band:Leq,T:{b}", t="num")
                 fields.append(cells)
-            return dict(headers=headers, rows=rows, fields=fields, kind="spectrum",
-                        note=f"共 {len(files)} 份 {kind} 文件，每份含 5 行统计量")
+            note = (f"共 {len(files)} 份 {kind} 文件，每份含 5 行统计量；"
+                    f"右侧 {len(band_list)} 列为 Leq,T 各频带声压级")
+            return dict(headers=headers, rows=rows, fields=fields,
+                        kind="spectrum", bandCols=band_list, bandStart=band_start,
+                        note=note)
 
         if cat == "STA":
             files = [r for r in self._sorted() if r["kind"] == "STA"]
