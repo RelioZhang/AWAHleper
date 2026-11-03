@@ -943,3 +943,134 @@ body.chart-collapsed .chart-expand-hint{display:flex;}
   background:linear-gradient(180deg,#f2f9ff 0%,#dcecf9 100%);
   color:#2b6a99;
 }
+
+/* ================= 模块视图切换 ================= */
+/* 整理视图下隐藏只属于原始数据的工具 */
+body.view-org #btnRead,
+body.view-org #btnClear,
+body.view-org #btnRevert,
+body.view-org #btnFilter,
+body.view-org .filterbox,
+body.view-org #btnExport,
+body.view-org #btnOpen,
+body.view-org #filterPanel{display:none !important;}
+
+/* ================= 数据整理 ================= */
+.org-side{flex:0 0 236px;}
+.sh-tag.org{background:#e8f5ec;color:#2f7d4d;}
+
+.org-stats{
+  padding:7px 12px 9px;
+  border-bottom:1px solid var(--line-soft);
+  background:#fafcfe;
+  font-size:11.5px;
+  color:var(--text-2);
+  line-height:1.75;
+}
+.org-stats b{color:#1b5f98;font-size:13px;}
+.org-stats .warn{color:#c26a1a;font-weight:600;}
+.org-stats .ok{color:#2f7d4d;font-weight:600;}
+
+.grplist li{height:auto;min-height:30px;padding:3px 10px 3px 8px;gap:6px;}
+.grplist li .gcheck{
+  width:13px;height:13px;margin:0;flex:0 0 auto;
+  accent-color:var(--blue);cursor:pointer;
+}
+.grplist .ginfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+.grplist .gname{
+  font-size:12.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  color:#2b3947;
+}
+.grplist .gmeta{
+  font-size:10.5px;color:#9aa8b6;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.grplist li.edited .gname{color:#8a5a00;}
+.grplist li.unnamed .gname{color:#98a6b3;font-style:italic;}
+.grplist li.sel-grp{background:#e8f2fb;}
+
+.org-main{background:#fff;}
+.org-toolbar{
+  flex:0 0 40px;
+  display:flex;align-items:center;gap:4px;
+  padding:0 10px;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,#fdfefe,#f2f8fd);
+}
+.toolbar-hint{font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+.org-tools{
+  flex:0 0 auto;
+  display:flex;gap:8px;
+  padding:9px 10px;
+  border-bottom:1px solid var(--line-soft);
+  background:#fbfdff;
+  overflow-x:auto;
+}
+.tool-card{
+  flex:1 1 240px;
+  min-width:230px;
+  padding:7px 9px 8px;
+  border:1px solid #dbe6f0;
+  border-radius:4px;
+  background:#fff;
+}
+.tc-head{display:flex;align-items:baseline;gap:6px;margin-bottom:6px;}
+.tc-title{font-size:12px;font-weight:700;color:#2c4b66;}
+.tc-sub{font-size:10.5px;color:#9aa8b6;}
+.tc-body{display:flex;gap:6px;}
+.tc-input{
+  flex:1;min-width:0;
+  height:27px;padding:0 8px;
+  border:1px solid #cfdce9;border-radius:3px;
+  font-size:12.5px;color:var(--text);
+  outline:none;background:#fdfefe;
+}
+.tc-input:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(43,127,196,.12);}
+.tc-body .btn{height:27px;padding:0 11px;flex:0 0 auto;}
+.tc-preview{
+  margin-top:5px;
+  font-size:11px;color:#8b9aa9;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tc-preview.has{color:#2f7d4d;}
+
+.org-tablewrap{flex:1 1 auto;max-height:none;min-height:120px;}
+#orgTbl{font-size:12.5px;}
+#orgTbl thead th{cursor:default;padding:0 8px;}
+#orgTbl thead th:hover{background:linear-gradient(180deg,#fafcfe 0%,#e9f0f7 100%);color:#3d4f61;}
+#orgTbl tbody td{height:27px;}
+#orgTbl tbody tr.picked td{background:#e8f2fb;}
+#orgTbl tbody td input[type=checkbox]{accent-color:var(--blue);cursor:pointer;}
+#orgTbl td.filecell{color:#7d8b99;font-size:11.5px;}
+.status-chip{
+  display:inline-block;
+  padding:0 7px;
+  border-radius:9px;
+  font-size:10.5px;
+  line-height:16px;
+}
+.status-chip.raw{background:#f0f3f6;color:#8b9aa9;}
+.status-chip.edited{background:#fff3d9;color:#a8700f;}
+.status-chip.unnamed{background:#fdf0ec;color:#b2553a;}
+
+.org-footer{
+  flex:0 0 42px;
+  display:flex;align-items:center;gap:6px;
+  padding:0 10px;
+  border-top:1px solid var(--line);
+  background:linear-gradient(180deg,#fdfefe,#eef4fa);
+}
+.org-path{font-size:11px;color:#9aa8b6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%;}
+
+/* 原始数据只读提示 */
+.readonly-notice{
+  flex:0 0 auto;
+  display:flex;align-items:center;gap:6px;
+  height:24px;padding:0 12px;
+  background:#fffbf0;
+  border-bottom:1px solid #f0e2c4;
+  font-size:11.5px;color:#9a7220;
+}
+body.view-org .readonly-notice{display:none;}

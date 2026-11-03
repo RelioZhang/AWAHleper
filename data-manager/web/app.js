@@ -444,26 +444,13 @@ function renderTable(emptyMsg) {
       td.title = txt;
 
       const f = fieldMap[ci];
-      if (f && f.ro) {
-        td.classList.add('readonly');
-        td.title = `${txt}　（来自同编号频谱文件，只读）`;
-      } else if (f) {
+      // 原始数据视图只读：不挂编辑事件，只在有整理结果时标出「已整理」
+      if (f) {
         const isDirty = (state.editedCells || new Set()).has(`${idx}:${ci}`);
-        td.classList.add('editable');
-        if (f.one === 'group') td.classList.add('grp');
-        if (isDirty) td.classList.add('modified');
-        td.title = f.one === 'group'
-          ? `${txt}　（双击修改，将同步到同编号的 1/3OCT·OCT·STA·NUM 文件）`
-          : `${txt}　（双击或直接输入可修改）`;
-        td.dataset.col = ci;
-        td.addEventListener('click', ev => {
-          // 单击仍用于选中行，仅当已在编辑态才吞掉
-          if (td.querySelector('input')) ev.stopPropagation();
-        });
-        td.addEventListener('dblclick', ev => {
-          ev.stopPropagation();
-          beginEdit(td, idx, ci, f, txt);
-        });
+        if (isDirty) {
+          td.classList.add('modified');
+          td.title = `${txt}　（已在数据整理中修改）`;
+        }
       }
       tr.appendChild(td);
     });
@@ -1147,6 +1134,11 @@ canvas.addEventListener('mouseleave', () => {
 canvas.addEventListener('click', ev => {
   const p = hitPoint(ev);
   if (!p) return;
+  // 原始数据为只读视图，曲线点仅可查看不可修改
+  if (!document.body.classList.contains('view-org')) {
+    toast(`原始数据只读：${p.metric} ${fmtHz(p.b)}Hz = ${p.v.toFixed(1)} dB\n如需修改请到【数据整理】`, 2600);
+    return;
+  }
   editPoint(p);
 });
 
@@ -1392,15 +1384,11 @@ $('#tbl').addEventListener('dblclick', e => {
 $$('.mod').forEach(btn => {
   btn.addEventListener('click', () => {
     const mod = btn.dataset.mod;
-    if (mod === 'data') {
-      toast('当前为【原始数据】——仪器导出的 AWA 原样展示，不修改源文件', 2600);
+    if (mod === 'data' || mod === 'organize') {
+      switchModule(mod);
       return;
     }
-    if (mod === 'organize') {
-      toast('数据整理：重命名、分组与批量筛选（规划中，待确认整理规则后开发）', 3000);
-      return;
-    }
-    toast('该模块尚未开发，当前聚焦【原始数据】与【数据整理】');
+    toast('该模块尚未开发，当前可用【数据管理】与【数据整理】');
   });
 });
 
@@ -1449,6 +1437,296 @@ $('.tablewrap').addEventListener('scroll', () => {
     tip._t = setTimeout(() => tip.classList.remove('show'), 900);
   }
 }, { passive: true });
+
+
+/* ============================================================ 数据整理 */
+const org = {
+  groups: [],
+  summary: {},
+  picked: new Set(),      // 选中的 gid
+};
+
+async function loadGroups() {
+  try {
+    const j = await api('/api/groups');
+    org.groups = j.groups || [];
+    org.summary = j.summary || {};
+    // 清掉已不存在的选择
+    const alive = new Set(org.groups.map(g => g.gid));
+    [...org.picked].forEach(g => { if (!alive.has(g)) org.picked.delete(g); });
+    renderOrg();
+  } catch (e) {
+    toast('读取分组失败：' + e.message, 3000);
+  }
+}
+
+function renderOrg() {
+  const gs = org.groups;
+  const s = org.summary;
+
+  // 左栏统计
+  const dupTxt = s.duplicates
+    ? `<span class="warn">${s.duplicates} 个点名重复</span>`
+    : '<span class="ok">点名无重复</span>';
+  $('#orgStats').innerHTML =
+    `共 <b>${s.groups || 0}</b> 组 · <b>${s.files || 0}</b> 个文件<br>` +
+    `已命名 <b>${(s.groups || 0) - (s.unnamed || 0)}</b> / 未命名 <b class="${s.unnamed ? 'warn' : ''}">${s.unnamed || 0}</b><br>` +
+    dupTxt;
+
+  // 左栏分组列表
+  const ul = $('#grpList');
+  ul.innerHTML = '';
+  gs.forEach(g => {
+    const li = document.createElement('li');
+    li.dataset.gid = g.gid;
+    const unnamed = !g.point || /^DATA_\d+$/i.test(g.point);
+    if (g.edited) li.classList.add('edited');
+    if (unnamed) li.classList.add('unnamed');
+    if (org.picked.has(g.gid)) li.classList.add('sel-grp');
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'gcheck';
+    cb.checked = org.picked.has(g.gid);
+    cb.addEventListener('change', () => {
+      if (cb.checked) org.picked.add(g.gid); else org.picked.delete(g.gid);
+      renderOrg();
+    });
+    cb.addEventListener('click', ev => ev.stopPropagation());
+
+    const info = document.createElement('div');
+    info.className = 'ginfo';
+    const nm = document.createElement('div');
+    nm.className = 'gname';
+    nm.textContent = g.point || '（未命名）';
+    nm.title = g.point || '';
+    const meta = document.createElement('div');
+    meta.className = 'gmeta';
+    meta.textContent = `#${g.gid} · ${(g.date || '').slice(5)} ${g.time || ''}`;
+    info.appendChild(nm);
+    info.appendChild(meta);
+
+    li.appendChild(cb);
+    li.appendChild(info);
+    li.addEventListener('click', () => {
+      cb.checked = !cb.checked;
+      if (cb.checked) org.picked.add(g.gid); else org.picked.delete(g.gid);
+      renderOrg();
+    });
+    ul.appendChild(li);
+  });
+
+  // 右侧表格
+  const tbody = $('#orgTbl tbody');
+  tbody.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  gs.forEach(g => {
+    const tr = document.createElement('tr');
+    if (org.picked.has(g.gid)) tr.classList.add('picked');
+    const unnamed = !g.point || /^DATA_\d+$/i.test(g.point);
+
+    const tdCb = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = org.picked.has(g.gid);
+    cb.addEventListener('change', () => {
+      if (cb.checked) org.picked.add(g.gid); else org.picked.delete(g.gid);
+      renderOrg();
+    });
+    tdCb.appendChild(cb);
+    tr.appendChild(tdCb);
+
+    const cells = [
+      g.gid,
+      g.point || '—',
+      g.date || '—',
+      g.time || '—',
+      g.splA == null ? '—' : Number(g.splA).toFixed(1),
+      g.splZ == null ? '—' : Number(g.splZ).toFixed(1),
+    ];
+    cells.forEach((v, i) => {
+      const td = document.createElement('td');
+      td.textContent = v;
+      if (i >= 4) td.className = 'num';
+      if (i === 1) td.title = v;
+      tr.appendChild(td);
+    });
+
+    const tdF = document.createElement('td');
+    tdF.className = 'filecell';
+    tdF.textContent = `${g.files.length} 个`;
+    tdF.title = g.files.join('\n');
+    tr.appendChild(tdF);
+
+    const tdS = document.createElement('td');
+    const chip = document.createElement('span');
+    if (g.edited) { chip.className = 'status-chip edited'; chip.textContent = '已整理'; }
+    else if (unnamed) { chip.className = 'status-chip unnamed'; chip.textContent = '待命名'; }
+    else { chip.className = 'status-chip raw'; chip.textContent = '原始'; }
+    tdS.appendChild(chip);
+    tr.appendChild(tdS);
+
+    tr.addEventListener('click', ev => {
+      if (ev.target.type === 'checkbox') return;
+      if (org.picked.has(g.gid)) org.picked.delete(g.gid); else org.picked.add(g.gid);
+      renderOrg();
+    });
+    frag.appendChild(tr);
+  });
+  tbody.appendChild(frag);
+
+  const empty = $('#orgEmpty');
+  empty.hidden = gs.length > 0;
+  empty.textContent = '没有读取到分组数据，请先在【数据管理】中读取数据目录';
+
+  $('#orgSelCount').textContent = `${org.picked.size} 组`;
+  $('#orgEditCount').textContent = `${s.edited || 0} 处`;
+  $('#orgPath').textContent = state.dir ? '数据目录：' + state.dir : '';
+  updateOrgTplPreview();
+}
+
+function pickedFiles() {
+  const set = new Set(org.picked);
+  const out = [];
+  org.groups.forEach(g => { if (set.has(g.gid)) out.push(g.files[0]); });
+  return out;
+}
+
+function selectGroups(pred, label) {
+  org.picked.clear();
+  org.groups.forEach(g => { if (pred(g)) org.picked.add(g.gid); });
+  renderOrg();
+  if (label) toast(`已选中 ${org.picked.size} 组（${label}）`, 1800);
+}
+
+/* 模板预览：取前 3 个选中组演示效果 */
+function tplValue(tpl, gid, idx, total) {
+  return String(tpl).replace(/\{gid\}/g, gid).replace(/\{i\}/g, idx).replace(/\{n\}/g, total);
+}
+
+function updateOrgTplPreview() {
+  const tpl = ($('#orgNameTpl').value || '').trim();
+  const sel = org.groups.filter(g => org.picked.has(g.gid));
+  const box = $('#orgNamePreview');
+  if (!tpl) { box.textContent = '预览：—'; box.classList.remove('has'); return; }
+  if (!sel.length) { box.textContent = '预览：请先选中分组'; box.classList.remove('has'); return; }
+  const demo = sel.slice(0, 3).map((g, i) => tplValue(tpl, g.gid, i + 1, sel.length));
+  box.textContent = '预览：' + demo.join('，') + (sel.length > 3 ? ` …（共 ${sel.length} 组）` : '');
+  box.classList.add('has');
+  return demo;
+}
+
+async function applyBatch(path, value, label) {
+  const files = pickedFiles();
+  if (!files.length) return toast('请先在左侧选中要整理的分组', 2600);
+  if (value == null || String(value).trim() === '') return toast('请填写内容');
+
+  const btn = event && event.target;
+  if (btn) btn.disabled = true;
+  try {
+    const j = await postJSON('/api/batch', { files, path, value, group: true });
+    state.cache.clear();
+    toast(`${label}：已更新 ${j.groups} 组 / ${j.written} 个文件（源文件未改动）`, 2600);
+    await loadGroups();
+  } catch (e) {
+    toast('应用失败：' + e.message, 3200);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* 事件绑定 */
+$('#orgSelAll').addEventListener('click', () =>
+  selectGroups(() => true, '全部'));
+$('#orgSelNone').addEventListener('click', () => {
+  org.picked.clear(); renderOrg();
+});
+$('#orgSelUnnamed').addEventListener('click', () =>
+  selectGroups(g => !g.point || /^DATA_\d+$/i.test(g.point), '未命名'));
+$('#orgSelDup').addEventListener('click', () => {
+  const cnt = {};
+  org.groups.forEach(g => { if (g.point) cnt[g.point] = (cnt[g.point] || 0) + 1; });
+  selectGroups(g => cnt[g.point] > 1, '重复点名');
+});
+
+$('#orgHeadCheck').addEventListener('change', ev => {
+  if (ev.target.checked) org.groups.forEach(g => org.picked.add(g.gid));
+  else org.picked.clear();
+  renderOrg();
+});
+
+$('#orgNameTpl').addEventListener('input', updateOrgTplPreview);
+$('#orgApplyName').addEventListener('click', ev => {
+  const tpl = ($('#orgNameTpl').value || '').trim();
+  if (!tpl) return toast('请填写命名规则，例如 三层-会议室-{i}');
+  applyBatch('point', tpl, '批量命名');
+});
+
+$('#orgApplyDate').addEventListener('click', ev => {
+  const v = $('#orgDate').value;
+  applyBatch('date', v, '批量改日期');
+});
+$('#orgDate').addEventListener('change', () => {
+  const v = $('#orgDate').value;
+  const n = org.picked.size;
+  const box = $('#orgDatePreview');
+  box.textContent = v ? `将把 ${n} 组改为 ${v}` : '预览：—';
+  box.classList.toggle('has', !!v && n > 0);
+});
+
+$('#orgApplyTime').addEventListener('click', ev => {
+  const v = $('#orgTime').value;
+  applyBatch('time', v, '批量改测试时间');
+});
+$('#orgTime').addEventListener('change', () => {
+  const v = $('#orgTime').value;
+  const n = org.picked.size;
+  const box = $('#orgTimePreview');
+  box.textContent = v ? `将把 ${n} 组改为 ${v}` : '预览：—';
+  box.classList.toggle('has', !!v && n > 0);
+});
+
+$('#orgExport').addEventListener('click', () => {
+  const files = pickedFiles();
+  if (!files.length) return toast('请先选中要导出的分组', 2400);
+  const url = '/api/export?cat=13OCT&files=' + encodeURIComponent(files.join(','));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast(`正在导出 ${files.length} 组（含整理后的值，源文件未改动）`, 2600);
+});
+
+$('#orgRevertAll').addEventListener('click', async () => {
+  if (!confirm('确定撤销本目录全部整理结果吗？\n源 AWA 文件始终不受影响。')) return;
+  try {
+    const j = await postJSON('/api/revert', {});
+    state.cache.clear();
+    toast(`已撤销 ${j.reverted} 个文件的整理`, 2200);
+    await loadGroups();
+  } catch (e) {
+    toast('撤销失败：' + e.message, 3000);
+  }
+});
+
+/* 模块切换 */
+function switchModule(mod) {
+  $$('.mod').forEach(b => b.classList.toggle('active', b.dataset.mod === mod));
+  const isOrg = mod === 'organize';
+  document.body.classList.toggle('view-org', isOrg);
+  $('#viewOrganize').hidden = !isOrg;
+  $('#viewRaw').hidden = isOrg;
+  $('#filterPanel').hidden = true;
+
+  if (isOrg) {
+    loadGroups();
+    $('#tbBadge').textContent = '数据整理';
+  } else {
+    $('#tbBadge').textContent = '原始数据';
+  }
+}
 
 /* ============================================================ 启动 */
 (function boot() {

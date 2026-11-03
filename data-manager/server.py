@@ -871,10 +871,101 @@ class Store:
         self.edits.save()
         return n
 
+    # ---------------- 批量整理 ----------------
+    def batch_update(self, files: list[str], path: str, value,
+                     group: bool = True) -> dict:
+        """一次给多个文件写同一个字段值。
+
+        - point 支持模板：'{gid}' 替换为测量编号，'{i}' 为序号，
+          例如 '会议室-{i}' → 会议室-01、会议室-02 ……
+        - group=True 时元数据仍会扩散到同组全部文件（去重后统一处理）
+        """
+        head = path.split(":")[0]
+        if head not in ("point", "date", "time"):
+            raise ValueError("批量整理只支持测点名、测试日期、测试时间")
+
+        targets: list[str] = []
+        for name in files:
+            if name not in self.records:
+                continue
+            members = self.group_members(name) if group else [name]
+            for m in members:
+                if m not in targets:
+                    targets.append(m)
+        if not targets:
+            raise ValueError("没有可处理的文件")
+
+        written = 0
+        # {i} 按「测量组」编号，而不是按文件，否则同组四个文件会拿到不同序号
+        seen_group: dict[str, int] = {}
+        for t in targets:
+            gid = self.group_of(t)
+            if gid not in seen_group:
+                seen_group[gid] = len(seen_group) + 1
+            raw = value
+            if head == "point" and isinstance(raw, str):
+                raw = (raw.replace("{gid}", gid)
+                          .replace("{i}", str(seen_group[gid]))
+                          .replace("{n}", str(len(seen_group))))
+            if raw in (None, ""):
+                val = None
+            else:
+                val = str(raw).strip()
+            self.edits.set(t, path, val)
+            written += 1
+
+        return dict(path=path, written=written, targets=targets,
+                    groups=len(seen_group), edits=self.edits.count())
+
+    def groups(self) -> list[dict]:
+        """按测量编号聚合：一组 = 一次测量的四类导出。"""
+        buckets: dict[str, list[str]] = {}
+        for name in self.records:
+            buckets.setdefault(self.group_of(name), []).append(name)
+
+        out = []
+        for gid, names in buckets.items():
+            names.sort()
+            base = self.records.get(f"1_3_{gid}.AWA") or self.records[names[0]]
+            v = self._view(base)
+            spl = v.get("spl", {}).get("Leq,T", {})
+            out.append(dict(
+                gid=gid,
+                point=v.get("point", ""),
+                date=v.get("date", ""),
+                time=v.get("time", ""),
+                splA=spl.get("A"),
+                splZ=spl.get("Z"),
+                files=names,
+                kinds=sorted({self.records[n]["kind"] for n in names}),
+                edited=any(n in self.edits.data for n in names),
+                ts=v.get("ts", ""),
+            ))
+        out.sort(key=lambda g: (g["date"] or "", g["time"] or "", g["gid"]))
+        return out
+
+    def summary(self) -> dict:
+        """整理概览：测点数量、重复点名、未命名等。"""
+        gs = self.groups()
+        points = [g["point"] for g in gs if g["point"]]
+        counter = defaultdict(int)
+        for p in points:
+            counter[p] += 1
+        dup = {p: c for p, c in counter.items() if c > 1}
+        unnamed = [g["gid"] for g in gs if not g["point"] or g["point"].startswith("DATA_")]
+        return dict(groups=len(gs), named=len(points) - len(unnamed),
+                    unnamed=len(unnamed), uniqPoints=len(counter),
+                    duplicates=len(dup), dupDetail=dup,
+                    files=len(self.records), edited=self.edits.count())
+
 
 # ============================================================ 导出 ===
-def build_export(cat: str, store: Store):
+def build_export(cat: str, store: Store, keep: list[list[str]] | None = None):
+    """keep 不为 None 时只导出这些行（按文件名集合过滤，供整理模块按条件导出）。"""
     data = store.table(cat)
+    if keep is not None:
+        wanted = {r[1] for r in keep} if keep and isinstance(keep[0], list) else set(keep)
+        data["rows"] = [r for r in data["rows"] if r[1] in wanted]
     headers = [h[0] for h in data["headers"]]
     label = dict(CATEGORIES).get(cat, cat)
     # Excel 工作表名 / 文件名不允许出现 / \ : * ? [ ]
@@ -972,6 +1063,14 @@ class Handler(BaseHTTPRequestHandler):
                                         body.get("value"))
                 return self._json(dict(ok=True, **res))
 
+            if u.path == "/api/batch":
+                res = self.store.batch_update(
+                    files=body.get("files") or [],
+                    path=body.get("path", ""),
+                    value=body.get("value"),
+                    group=bool(body.get("group", True)))
+                return self._json(dict(ok=True, **res))
+
             if u.path == "/api/revert":
                 n = self.store.revert(body.get("file") or None)
                 return self._json(dict(ok=True, reverted=n,
@@ -1019,6 +1118,11 @@ class Handler(BaseHTTPRequestHandler):
                                        path=self.store.edits.path,
                                        files=self.store.edits.data))
 
+            if path == "/api/groups":
+                self.store.ensure()
+                return self._json(dict(ok=True, groups=self.store.groups(),
+                                       summary=self.store.summary()))
+
             if path == "/api/detail":
                 rec = self.store.detail(q.get("f", ""))
                 if rec is None:
@@ -1028,7 +1132,11 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/export":
                 cat = q.get("cat", "13OCT")
-                body, fname, ctype = build_export(cat, self.store)
+                # files：逗号分隔的文件名，只导出这些行（供整理模块按选中分组导出）
+                keep = None
+                if q.get("files"):
+                    keep = [f for f in q["files"].split(",") if f]
+                body, fname, ctype = build_export(cat, self.store, keep)
                 return self._send(body, ctype, 200, {
                     "Content-Disposition":
                         f"attachment; filename*=UTF-8''{urllib.parse.quote(fname)}"})

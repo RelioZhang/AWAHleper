@@ -106,7 +106,7 @@
 
   <!-- ================= 操作栏 ================= -->
   <div class="actionbar">
-    <button id="btnRead" class="act primary">
+    <button data-only="raw" id="btnRead" class="act primary">
       <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
         <path d="M8 1v8m0 0L5 6m3 3l3-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
         <path d="M2 11v3h12v-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
@@ -135,7 +135,7 @@
       <span>筛选</span>
       <b class="act-badge" id="filterBadge" hidden>0</b>
     </button>
-    <button id="btnRevert" class="act" disabled>
+    <button data-only="raw" id="btnRevert" class="act" disabled>
       <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
         <path d="M3.5 8a4.5 4.5 0 104.5-4.5M3.5 8L1.8 6.3M3.5 8L5.2 6.3" stroke="currentColor"
               stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
@@ -143,14 +143,14 @@
       <span>撤销修改</span>
       <b class="act-badge edit" id="editBadge" hidden>0</b>
     </button>
-    <button id="btnClear" class="act danger">
+    <button data-only="raw" id="btnClear" class="act danger">
       <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
         <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
       </svg>
       <span>数据清空</span>
     </button>
     <div class="ab-spacer"></div>
-    <div class="filterbox">
+    <div class="filterbox" data-only="raw">
       <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
         <circle cx="7" cy="7" r="4.5" stroke="#8a97a6" stroke-width="1.4" fill="none"/>
         <path d="M10.4 10.4L14 14" stroke="#8a97a6" stroke-width="1.4" stroke-linecap="round"/>
@@ -178,8 +178,16 @@
     </div>
   </div>
 
-  <!-- ================= 主体 ================= -->
-  <main class="body">
+  <!-- ================= 主体（原始数据，只读） ================= -->
+  <main class="body" id="viewRaw">
+
+    <div class="readonly-notice">
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        <rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M5.5 7V5a2.5 2.5 0 015 0v2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+      </svg>
+      <span>原始数据只读展示 — 如需修改测点名、日期或批量整理，请切换到【数据整理】</span>
+    </div>
 
     <!-- 左：数据分类 -->
     <aside class="sidebar">
@@ -230,6 +238,127 @@
                 fill="none" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span>曲线区已折叠，点击展开</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= 数据整理 ================= -->
+  <main class="body view-organize" id="viewOrganize" hidden>
+
+    <!-- 左：分组列表 -->
+    <aside class="sidebar org-side">
+      <div class="side-head">测量分组 <span class="sh-tag org">整理</span></div>
+      <div class="org-stats" id="orgStats"></div>
+      <ul id="grpList" class="catlist grplist"></ul>
+      <div class="side-foot">
+        <div class="sf-row"><span>已选</span><b id="orgSelCount">0 组</b></div>
+        <div class="sf-row"><span>已改</span><b id="orgEditCount">0 处</b></div>
+        <div class="sf-row"><span>源文件</span><b>只读，不改动</b></div>
+      </div>
+    </aside>
+
+    <!-- 右：整理工作台 -->
+    <section class="content org-main">
+
+      <div class="org-toolbar">
+        <button class="act primary" id="orgSelAll" title="全选当前分组列表">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor"
+                  stroke-width="1.4" fill="none"/>
+            <path d="M4.6 8l2 2 4-4" stroke="currentColor" stroke-width="1.6"
+                  fill="none" stroke-linecap="round"/>
+          </svg>
+          <span>全选</span>
+        </button>
+        <button class="act" id="orgSelNone"><span>取消全选</span></button>
+        <button class="act" id="orgSelUnnamed" title="选中测点名仍为仪器默认名（DATA_xxxx）的分组">
+          <span>选未命名</span>
+        </button>
+        <button class="act" id="orgSelDup" title="选中测点名重复的分组">
+          <span>选重复点名</span>
+        </button>
+        <div class="ab-spacer"></div>
+        <span class="toolbar-hint" id="orgHint">勾选左侧分组，或用下方批量操作</span>
+      </div>
+
+      <div class="org-tools">
+        <!-- 批量重命名 -->
+        <div class="tool-card">
+          <div class="tc-head">
+            <span class="tc-title">批量命名测点</span>
+            <span class="tc-sub">支持 {i} 序号、{gid} 编号</span>
+          </div>
+          <div class="tc-body">
+            <input id="orgNameTpl" class="tc-input" type="text"
+                   placeholder="例如：三层-会议室-{i}" spellcheck="false">
+            <button class="btn primary" id="orgApplyName">应用</button>
+          </div>
+          <div class="tc-preview" id="orgNamePreview">预览：—</div>
+        </div>
+
+        <!-- 批量改日期 -->
+        <div class="tool-card">
+          <div class="tc-head">
+            <span class="tc-title">批量改测量日期</span>
+            <span class="tc-sub">2026-11-02 格式</span>
+          </div>
+          <div class="tc-body">
+            <input id="orgDate" class="tc-input" type="date">
+            <button class="btn primary" id="orgApplyDate">应用</button>
+          </div>
+          <div class="tc-preview" id="orgDatePreview">预览：—</div>
+        </div>
+
+        <!-- 工况 -->
+        <div class="tool-card">
+          <div class="tc-head">
+            <span class="tc-title">批量改测试时间</span>
+            <span class="tc-sub">作为「测量工况」时间标记</span>
+          </div>
+          <div class="tc-body">
+            <input id="orgTime" class="tc-input" type="time">
+            <button class="btn primary" id="orgApplyTime">应用</button>
+          </div>
+          <div class="tc-preview" id="orgTimePreview">预览：—</div>
+        </div>
+      </div>
+
+      <!-- 分组表格 -->
+      <div class="tablewrap org-tablewrap">
+        <table id="orgTbl">
+          <thead>
+            <tr>
+              <th style="width:34px"><input type="checkbox" id="orgHeadCheck"></th>
+              <th style="width:70px">编号</th>
+              <th style="width:170px">测点名</th>
+              <th style="width:110px">测试日期</th>
+              <th style="width:92px">测试时间</th>
+              <th style="width:80px">SPL(A)</th>
+              <th style="width:80px">SPL(Z)</th>
+              <th style="width:150px">文件</th>
+              <th style="width:70px">状态</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="table-empty" id="orgEmpty" hidden></div>
+      </div>
+
+      <div class="org-footer">
+        <button class="act" id="orgExport">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M8 15V7m0 0L5 10m3-3l3 3" stroke="currentColor" stroke-width="1.5"
+                  fill="none" stroke-linecap="round"/>
+            <path d="M2 5V2h12v3" stroke="currentColor" stroke-width="1.5"
+                  fill="none" stroke-linecap="round"/>
+          </svg>
+          <span>导出选中分组</span>
+        </button>
+        <button class="act danger" id="orgRevertAll">
+          <span>撤销全部修改</span>
+        </button>
+        <div class="ab-spacer"></div>
+        <span class="org-path" id="orgPath"></span>
       </div>
     </section>
   </main>
