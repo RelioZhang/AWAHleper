@@ -211,6 +211,114 @@ BANDS_ALL = [6.3, 8, 10, 12.5, 16, 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
              3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000]
 METRICS = ["Leq,T", "LFmax", "LFmin", "LSmax", "LSmin"]
 
+# ============================================================ 编辑覆盖层 ===
+# 原始 AWA 文件是仪器导出件，任何情况下都不改写。
+# 界面上的修改以「文件名 → 字段路径 → 新值」的形式存进独立侧车文件，
+# 读取时叠加到解析结果上；删除侧车文件即可完全还原。
+EDITS_NAME = ".awa-edits.json"
+EDITABLE = {
+    "point": "测点名", "date": "测试日期", "time": "测试时间",
+    "band": "频带值", "spl": "总值", "stat": "统计量",
+}
+
+
+class EditStore:
+    """侧车编辑存储。按数据目录区分，不触碰 .AWA 原文件。"""
+
+    def __init__(self, data_dir: str):
+        self.dir = data_dir
+        self.path = os.path.join(data_dir, EDITS_NAME)
+        self.data: dict[str, dict] = {}
+        self.load()
+
+    def load(self) -> None:
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict) and isinstance(raw.get("files"), dict):
+                self.data = raw["files"]
+        except (OSError, ValueError):
+            self.data = {}
+
+    def save(self) -> None:
+        payload = dict(version=1,
+                       updated=time.strftime("%Y-%m-%d %H:%M:%S"),
+                       files=self.data)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, self.path)          # 原子替换，避免写坏
+
+    def get(self, name: str, path: str):
+        return (self.data.get(name) or {}).get(path)
+
+    def set(self, name: str, path: str, value) -> None:
+        rec = self.data.setdefault(name, {})
+        if value is None or value == "":
+            rec.pop(path, None)
+        else:
+            rec[path] = value
+        if not rec:
+            self.data.pop(name, None)
+        self.save()
+
+    def count(self) -> int:
+        return sum(len(v) for v in self.data.values())
+
+
+def norm_band(key) -> str:
+    """频带键统一成「整数不带小数点」：1000.0 -> 1000，31.5 -> 31.5。
+
+    解析、编辑、查询三处必须用同一套写法，否则会出现 1000 与 1000.0
+    两个键并存，撤销时改不回来。
+    """
+    try:
+        f = float(key)
+    except (TypeError, ValueError):
+        return str(key)
+    return str(int(f)) if f == int(f) else str(f)
+
+
+def apply_edits(rec: dict, edits: dict) -> dict:
+    """把侧车编辑叠加到解析结果（深拷贝，不动缓存里的原始值）。"""
+    if not edits:
+        return rec
+    out = dict(rec)
+    out["metrics"] = {m: {norm_band(k): v for k, v in b.items()}
+                      for m, b in rec.get("metrics", {}).items()}
+    out["spl"] = {m: dict(v) for m, v in rec.get("spl", {}).items()}
+    out["stats"] = {m: dict(v) for m, v in rec.get("stats", {}).items()}
+    out["_edits"] = sorted(edits.keys())
+
+    for path, val in edits.items():
+        parts = path.split(":")
+        try:
+            if len(parts) == 1:
+                out[parts[0]] = val
+            elif parts[0] == "spl" and len(parts) == 3:
+                out["spl"].setdefault(parts[1], {})[parts[2]] = val
+            elif parts[0] == "stat" and len(parts) == 3:
+                out["stats"].setdefault(parts[1], {})[parts[2]] = val
+            elif parts[0] == "band" and len(parts) == 3:
+                bands = out["metrics"].setdefault(parts[1], {})
+                key = norm_band(parts[2])
+                if val is None:
+                    bands.pop(key, None)          # 撤销该点：回到文件原值
+                else:
+                    bands[key] = val
+            elif parts[0] == "dist" and len(parts) == 2:
+                idx = int(parts[1])
+                dist = list(out.get("dist") or [])
+                if 0 <= idx < len(dist):
+                    dist[idx] = [dist[idx][0], val]
+                    out["dist"] = dist
+        except (KeyError, ValueError):
+            continue
+    if "Leq,T" in out["metrics"]:
+        out["bands"] = out["metrics"]["Leq,T"]
+    return out
+
+
 # ============================================================ 文件解析 ===
 def _split(line: str) -> list[str]:
     """AWA 导出为 TAB 分隔；无 TAB 时退回空白切分。"""
@@ -373,7 +481,7 @@ def parse_awa(path: str) -> dict:
             if j < len(cols):
                 v = num(cols[j])
                 if v is not None:
-                    bands[str(f)] = v
+                    bands[norm_band(f)] = v
         spl = {}
         for j, k in spl_cols.items():
             if j < len(cols):
@@ -394,6 +502,14 @@ def parse_awa(path: str) -> dict:
             rec["stats"][metric] = stats
 
     rec["bands"] = rec["metrics"].get("Leq,T", {})
+    # 记录字段位置（解析期的行列号），仅用于界面定位，不回写原文件
+    rec["_row"] = hidx + 2                      # 人看行号：表头是第 hidx+1 行
+    rec["_cols"] = dict(
+        bands={norm_band(f): j for j, f in freq_cols.items()},
+        spl={k: j for j, k in spl_cols.items()},
+        stats={nm: j for j, nm in stat_cols.items()},
+        point=i_point, date=i_date, time=i_time,
+    )
     return rec
 
 
@@ -421,6 +537,7 @@ class Store:
         self.elapsed_ms = 0.0
         self.scanned_at = 0.0
         self.errors: list[str] = []
+        self.edits = EditStore(self.dir)
 
     # ---------------- 扫描 ----------------
     def scan(self, new_dir: str | None = None) -> dict:
@@ -452,6 +569,7 @@ class Store:
                                      metrics={}, spl={}, stats={}, dist=[],
                                      rows=0, error=str(e))
         self.records, self.errors = records, errors
+        self.edits = EditStore(self.dir)             # 每个数据目录各自的侧车
         self.elapsed_ms = (time.perf_counter() - t0) * 1000
         self.scanned_at = time.time()
 
@@ -498,10 +616,20 @@ class Store:
     def _f(v, spec="{:.1f}", dash="—"):
         return dash if v is None else spec.format(v)
 
+    def _view(self, r: dict) -> dict:
+        """原始解析结果 + 侧车编辑。"""
+        return apply_edits(r, self.edits.data.get(r["file"], {}))
+
     def table(self, cat: str) -> dict:
-        """返回 {headers, rows, note}；rows 首列为序号，第二列为文件名。"""
+        """返回表头、行数据与「可编辑单元格」映射。
+
+        fields[i][j] 描述第 i 行第 j 列能否编辑及其字段路径：
+            {"p": "point"}              测点名
+            {"p": "spl:Leq,T:A"}        总值  A/C/Z/U/T/B
+            {"p": "stat:LeqT:Lmax"}     STA 统计量
+            {"p": "band:Leq,T:1000"}    频带值（曲线点）
+        """
         self.ensure()
-        c = self.counts()
         if cat in ("13OCT", "OCT"):
             kind = "1/3OCT" if cat == "13OCT" else "OCT"
             files = [r for r in self._sorted() if r["kind"] == kind]
@@ -510,49 +638,66 @@ class Store:
                 ("测试时间", 84), ("经历时间", 86), ("SPL(A)", 68),
                 ("SPL(C)", 68), ("SPL(Z)", 68), ("Leq,T (A)", 78),
             ]
-            rows = []
+            rows, fields = [], []
             for i, r in enumerate(files, 1):
-                spl = r["spl"].get("Leq,T", {})
-                rows.append([str(i), r["file"], r["point"], r["date"], r["time"],
-                             r["ts"], self._f(spl.get("A")), self._f(spl.get("C")),
+                v = self._view(r)
+                spl = v["spl"].get("Leq,T", {})
+                rows.append([str(i), r["file"], v["point"], v["date"], v["time"],
+                             v["ts"], self._f(spl.get("A")), self._f(spl.get("C")),
                              self._f(spl.get("Z")), self._f(spl.get("A"))])
-            return dict(headers=headers, rows=rows, kind="spectrum",
+                cells = {2: dict(p="point", t="text"), 3: dict(p="date", t="text"),
+                         4: dict(p="time", t="text")}
+                for col, key in ((6, "A"), (7, "C"), (8, "Z"), (9, "A")):
+                    cells[col] = dict(p=f"spl:Leq,T:{key}", t="num")
+                fields.append(cells)
+            return dict(headers=headers, rows=rows, fields=fields, kind="spectrum",
                         note=f"共 {len(files)} 份 {kind} 文件，每份含 5 行统计量")
 
         if cat == "STA":
             files = [r for r in self._sorted() if r["kind"] == "STA"]
+            keys = ("LeqT", "Lmax", "Lmin", "L10", "L50", "L90", "L95", "SD", "SEL")
             headers = [("序号", 52), ("文件名", 128), ("测点名", 96), ("测试日期", 96),
                        ("测试时间", 84), ("LeqT", 64), ("Lmax", 64), ("Lmin", 64),
                        ("L10", 60), ("L50", 60), ("L90", 60), ("L95", 60),
                        ("SD", 56), ("SEL", 64)]
-            rows = []
+            rows, fields = [], []
             for i, r in enumerate(files, 1):
-                st = next(iter(r["stats"].values()), {})
-                rows.append([str(i), r["file"], r["point"], r["date"], r["time"]] +
-                            [self._f(st.get(k)) for k in
-                             ("LeqT", "Lmax", "Lmin", "L10", "L50", "L90",
-                              "L95", "SD", "SEL")])
-            return dict(headers=headers, rows=rows, kind="stats",
+                v = self._view(r)
+                metric, st = next(iter(v["stats"].items()), ("A F", {}))
+                rows.append([str(i), r["file"], v["point"], v["date"], v["time"]] +
+                            [self._f(st.get(k)) for k in keys])
+                cells = {2: dict(p="point", t="text"), 3: dict(p="date", t="text"),
+                         4: dict(p="time", t="text")}
+                for col, k in enumerate(keys, 5):
+                    cells[col] = dict(p=f"stat:{metric}:{k}", t="num")
+                fields.append(cells)
+            return dict(headers=headers, rows=rows, fields=fields, kind="stats",
                         note=f"共 {len(files)} 份 STA 统计文件")
 
         if cat == "TOTAL":
             headers = [("序号", 52), ("文件名", 128), ("测点名", 96), ("测试日期", 96),
                        ("指标", 74), ("SPL(A)", 68), ("SPL(C)", 68), ("SPL(Z)", 68),
                        ("SPL(U)", 68), ("SPL(T)", 68), ("SPL(B)", 68)]
-            rows = []
+            rows, fields = [], []
             n = 0
             for r in self._sorted():
                 if not r["spl"]:
                     continue
+                v = self._view(r)
                 for metric in METRICS:
-                    if metric not in r["spl"]:
+                    if metric not in v["spl"]:
                         continue
-                    spl = r["spl"][metric]
+                    spl = v["spl"][metric]
                     n += 1
-                    rows.append([str(n), r["file"], r["point"], r["date"], metric] +
+                    rows.append([str(n), r["file"], v["point"], v["date"], metric] +
                                 [self._f(spl.get(k)) for k in
                                  ("A", "C", "Z", "U", "T", "B")])
-            return dict(headers=headers, rows=rows, kind="total",
+                    cells = {2: dict(p="point", t="text"),
+                             3: dict(p="date", t="text", one="file")}
+                    for col, k in enumerate(("A", "C", "Z", "U", "T", "B"), 5):
+                        cells[col] = dict(p=f"spl:{metric}:{k}", t="num")
+                    fields.append(cells)
+            return dict(headers=headers, rows=rows, fields=fields, kind="total",
                         note=f"从 {sum(1 for r in self.records.values() if r['spl'])} "
                              f"份频谱文件中提取 {n} 条总值记录")
 
@@ -561,12 +706,14 @@ class Store:
             headers = [("序号", 52), ("文件名", 128), ("测点名", 96), ("测试日期", 96),
                        ("声级范围 (dB)", 118), ("峰值档位 (dB)", 104),
                        ("最大占比 (%)", 104), ("分布档数", 84)]
-            rows = []
+            rows, fields = [], []
             for i, r in enumerate(files, 1):
-                d = r["dist"]
+                v = self._view(r)
+                d = v["dist"]
                 meta = self._sibling(r["file"]) or {}
-                point = r["point"] or meta.get("point", "")
-                date = r["date"] or meta.get("date", "")
+                point = v["point"] or meta.get("point", "")
+                date = v["date"] or meta.get("date", "")
+                # NUM 文件本身无表头信息，测点名/日期来自同编号频谱文件，只读
                 if d:
                     lo, hi = d[0][0], d[-1][0]
                     pk = max(d, key=lambda x: x[1])
@@ -576,10 +723,12 @@ class Store:
                 else:
                     rows.append([str(i), r["file"], point, date,
                                  "—", "—", "—", "0"])
-            return dict(headers=headers, rows=rows, kind="num",
+                fields.append({2: dict(ro=1), 3: dict(ro=1)})
+            return dict(headers=headers, rows=rows, fields=fields, kind="num",
                         note=f"共 {len(files)} 份声级分布文件")
 
-        return dict(headers=[("序号", 52), ("文件名", 128)], rows=[], kind="empty",
+        return dict(headers=[("序号", 52), ("文件名", 128)], rows=[], fields=[],
+                    kind="empty",
                     note="该类数据本次未读取到（AWA6228+ 未导出该类型，或本批次未测量）")
 
     def _sibling(self, name: str) -> dict | None:
@@ -605,13 +754,55 @@ class Store:
         r = self.records.get(name)
         if r is None:
             return None
-        out = dict(r)
+        out = self._view(r)
         out["file"] = name
         # 只保留有效频带，前端按数值排序
         for m, bands in out["metrics"].items():
             out["metrics"][m] = {k: v for k, v in bands.items()
                                  if float(k) in BANDS_ALL}
+        # 曲线点是否可编辑：给出每个频带的字段路径
+        out["editPaths"] = {
+            m: {b: f"band:{m}:{b}" for b in out["metrics"].get(m, {})}
+            for m in METRICS if m in out["metrics"]
+        }
+        if out["kind"] == "NUM":
+            out["editPaths"] = {"dist": {str(i): f"dist:{i}"
+                                         for i in range(len(out.get("dist") or []))}}
         return out
+
+    # ---------------- 编辑 ----------------
+    def update(self, name: str, path: str, value) -> dict:
+        """记录一条修改到侧车文件；.AWA 原文件保持只读。"""
+        if name not in self.records:
+            raise ValueError(f"未找到文件：{name}")
+        head = path.split(":")[0]
+        if head not in ("point", "date", "time", "spl", "stat", "band", "dist"):
+            raise ValueError(f"该字段不支持编辑：{path}")
+
+        if head in ("point", "date", "time"):
+            val = None if value in (None, "") else str(value).strip()
+        else:
+            if value in (None, ""):
+                val = None
+            else:
+                try:
+                    val = round(float(str(value).strip()), 3)
+                except ValueError:
+                    raise ValueError(f"请输入数字：{value}") from None
+        self.edits.set(name, path, val)
+        return dict(file=name, path=path, value=val,
+                    edits=self.edits.count())
+
+    def revert(self, name: str | None = None) -> int:
+        """撤销：指定文件则该文件全部还原，否则清空本目录所有编辑。"""
+        if name:
+            self.edits.data.pop(name, None)
+            n = 1
+        else:
+            n = len(self.edits.data)
+            self.edits.data = {}
+        self.edits.save()
+        return n
 
 
 # ============================================================ 导出 ===
@@ -698,6 +889,33 @@ class Handler(BaseHTTPRequestHandler):
                    "application/json; charset=utf-8", code)
 
     # ---- 路由 ----
+    def do_POST(self):
+        """只接收 JSON 小请求：字段编辑 / 撤销编辑。"""
+        u = urllib.parse.urlparse(self.path)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+        except (ValueError, UnicodeDecodeError):
+            return self._json(dict(ok=False, error="请求体不是合法 JSON"), 400)
+
+        try:
+            if u.path == "/api/edit":
+                res = self.store.update(body.get("file", ""),
+                                        body.get("path", ""),
+                                        body.get("value"))
+                return self._json(dict(ok=True, **res))
+
+            if u.path == "/api/revert":
+                n = self.store.revert(body.get("file") or None)
+                return self._json(dict(ok=True, reverted=n,
+                                       count=self.store.edits.count()))
+
+            return self._json(dict(ok=False, error="not found"), 404)
+        except ValueError as e:
+            return self._json(dict(ok=False, error=str(e)), 400)
+        except Exception as e:                              # noqa: BLE001
+            return self._json(dict(ok=False, error=f"{type(e).__name__}: {e}"), 500)
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
@@ -726,7 +944,13 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.store.table(cat)
                 data["ok"] = True
                 data["cat"] = cat
+                data["editCount"] = self.store.edits.count()
                 return self._json(data)
+
+            if path == "/api/edits":
+                return self._json(dict(ok=True, count=self.store.edits.count(),
+                                       path=self.store.edits.path,
+                                       files=self.store.edits.data))
 
             if path == "/api/detail":
                 rec = self.store.detail(q.get("f", ""))

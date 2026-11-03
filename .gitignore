@@ -10,7 +10,9 @@
 输出/
 图表/
 
-# 运行时产物（.config*.json 记录上次/最近的数据目录）
+# 运行时产物（.config*.json 记录上次/最近的数据目录；.awa-edits.json 是侧车修改）
+.awa-edits.json
+.awa-edits.json.tmp
 .config*.json
 .pick.tmp
 .lastdir

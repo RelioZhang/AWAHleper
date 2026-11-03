@@ -32,6 +32,11 @@ const state = {
   cleared: false,
   recent: [],
   suggest: [],
+  fields: [],
+  sort: { col: -1, dir: 1 },
+  conds: [],
+  editCount: 0,
+  editedCells: new Set(),
   vis: Object.fromEntries(METRICS.map(m => [m.key, true])),
   cache: new Map(),
   w: 0, h: 0,
@@ -61,6 +66,17 @@ async function api(path) {
 }
 
 const fmtDb = v => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(1);
+
+async function postJSON(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || '请求失败');
+  return j;
+}
 
 function fmtHz(h) {
   h = Number(h);
@@ -123,6 +139,8 @@ async function scan(dir) {
     $('#dirInput').value = j.dir;
 
     await loadTable(state.cat);
+    state.editedCells = new Set();
+    updateEditBadge();
     if (!j.files) {
       $('#dirInput').value = j.dir;
       $('#modal').hidden = false;
@@ -212,7 +230,7 @@ async function loadTable(cat) {
   renderCats();
 
   if (state.cleared) {
-    state.headers = []; state.rows = []; state.kind = 'empty';
+    state.headers = []; state.rows = []; state.fields = []; state.kind = 'empty';
     renderTable('数据已清空，请点击【数据读取】重新加载');
     resetChart();
     return;
@@ -222,10 +240,16 @@ async function loadTable(cat) {
     const j = await api('/api/table?cat=' + encodeURIComponent(cat));
     state.headers = j.headers;
     state.rows = j.rows;
+    state.fields = j.fields || [];
     state.kind = j.kind;
     state.note = j.note;
     state.selectedFile = null;
     state.detail = null;
+    state.editCount = j.editCount || 0;
+    state.sort = { col: -1, dir: 1 };
+    state.conds = [];
+    updateEditBadge();
+    buildFilterCols();
     renderTable();
     resetChart();
     $('#stCount').textContent = `${catLabel(cat)}：${j.rows.length} 行`;
@@ -235,10 +259,118 @@ async function loadTable(cat) {
   }
 }
 
+/* ---------- 取值：数字优先，日期/时间按字符串 ---------- */
+function toNum(v) {
+  const s = String(v ?? '').trim();
+  if (!s || !/^-?\d+(\.\d+)?$/.test(s)) return null;
+  return parseFloat(s);
+}
+
+function cellValue(row, ci) {
+  const raw = row[ci];
+  const n = toNum(raw);
+  return n === null ? String(raw ?? '') : n;
+}
+
+/* ---------- 筛选 + 排序 ---------- */
+const OPS = [
+  { k: 'contains', label: '包含' },
+  { k: 'notContain', label: '不包含' },
+  { k: 'eq', label: '等于' },
+  { k: 'ne', label: '不等于' },
+  { k: 'gt', label: '大于' },
+  { k: 'ge', label: '大于等于' },
+  { k: 'lt', label: '小于' },
+  { k: 'le', label: '小于等于' },
+  { k: 'between', label: '介于' },
+  { k: 'empty', label: '为空' },
+  { k: 'notEmpty', label: '不为空' },
+];
+
+function matchCond(val, cond) {
+  const want = cond.val;
+  const raw = String(val ?? '').trim();
+  const isBlank = raw === '' || raw === '—';
+  if (cond.op === 'empty') return isBlank;
+  if (cond.op === 'notEmpty') return !isBlank;
+
+  // 大小比较：空值一律不参与，避免 '—' > '50' 这类字符串比较误命中
+  const relational = ['gt', 'ge', 'lt', 'le', 'between'].includes(cond.op);
+  if (relational && isBlank) return false;
+
+  const a = toNum(raw);
+  const b = toNum(want);
+  const numeric = a !== null && b !== null;
+
+  switch (cond.op) {
+    case 'contains':
+      return raw.toLowerCase().includes(String(want).toLowerCase());
+    case 'notContain':
+      return !raw.toLowerCase().includes(String(want).toLowerCase());
+    case 'eq':
+      return numeric ? a === b : raw.toLowerCase() === String(want).toLowerCase();
+    case 'ne':
+      return numeric ? a !== b : raw.toLowerCase() !== String(want).toLowerCase();
+    case 'gt':
+      return numeric ? a > b : raw > String(want);
+    case 'ge':
+      return numeric ? a >= b : raw >= String(want);
+    case 'lt':
+      return numeric ? a < b : raw < String(want);
+    case 'le':
+      return numeric ? a <= b : raw <= String(want);
+    case 'between': {
+      if (!numeric) return true;
+      const c = toNum(cond.val2);
+      if (c === null) return a >= b;
+      const lo = Math.min(b, c), hi = Math.max(b, c);
+      return a >= lo && a <= hi;
+    }
+    default:
+      return true;
+  }
+}
+
+function activeConds() {
+  return state.conds.filter(c => c.col >= 0 && c.op &&
+    (c.op === 'empty' || c.op === 'notEmpty' || String(c.val).trim() !== ''));
+}
+
 function filteredRows() {
-  if (!state.filter) return state.rows;
-  const q = state.filter.toLowerCase();
-  return state.rows.filter(r => r.some(c => String(c).toLowerCase().includes(q)));
+  let rows = state.rows;
+  const conds = activeConds();
+  if (conds.length) {
+    rows = rows.filter(r => conds.every(c => matchCond(r[c.col], c)));
+  }
+  if (state.filter) {
+    const q = state.filter.toLowerCase();
+    rows = rows.filter(r => r.some(c => String(c).toLowerCase().includes(q)));
+  }
+  return rows;
+}
+
+function sortedRows(rows) {
+  const { col, dir } = state.sort;
+  if (col < 0 || dir === 0) return rows;
+  const decorated = rows.map((r, i) => ({ r, i }));
+  decorated.sort((x, y) => {
+    const ra = String(x.r[col] ?? '').trim();
+    const rb = String(y.r[col] ?? '').trim();
+    const ba = ra === '' || ra === '—';
+    const bb = rb === '' || rb === '—';
+    if (ba !== bb) return ba ? 1 : -1;          // 空值恒排末尾，不随升降序翻转
+    const a = cellValue(x.r, col);
+    const b = cellValue(y.r, col);
+    let c;
+    if (typeof a === 'number' && typeof b === 'number') c = a - b;
+    else c = String(a).localeCompare(String(b), 'zh-CN', { numeric: true });
+    return c !== 0 ? c * dir : x.i - y.i;      // 相等时保持原序，避免跳动
+  });
+  return decorated.map(d => d.r);
+}
+
+function visibleRows() {
+  return sortedRows(filteredRows());
 }
 
 function renderTable(emptyMsg) {
@@ -250,44 +382,310 @@ function renderTable(emptyMsg) {
   const totalW = state.headers.reduce((s, h) => s + h[1], 0);
   $('#tbl').style.minWidth = totalW ? totalW + 'px' : '0';
 
-  state.headers.forEach(([label, w]) => {
+  const idxLabel = state.sort.col === 0 ? '序号' : '序号';
+  state.headers.forEach(([label, w], ci) => {
     const th = document.createElement('th');
-    th.textContent = label;
     th.style.width = w + 'px';
-    th.title = label;
+    th.title = ci === 0 ? `${label}（点击按原始顺序排序）` : `${label}（点击排序）`;
+    const mark = document.createElement('i');
+    mark.className = 'sortmark';
+    const sorted = state.sort.col === ci && state.sort.dir !== 0;
+    mark.textContent = sorted ? (state.sort.dir > 0 ? '▲' : '▼') : '⇅';
+    th.appendChild(document.createTextNode(label));
+    th.appendChild(mark);
+    if (sorted) th.classList.add('sorted');
+    th.addEventListener('click', () => toggleSort(ci));
     theadRow.appendChild(th);
   });
 
-  const rows = filteredRows();
+  const rows = visibleRows();
   const frag = document.createDocumentFragment();
   rows.forEach(row => {
     const idx = state.rows.indexOf(row);
     const tr = document.createElement('tr');
     tr.dataset.i = idx;
     tr.dataset.file = row[1];
+    const fieldMap = state.fields[idx] || {};
     row.forEach((cell, ci) => {
       const td = document.createElement('td');
       const txt = String(cell ?? '');
-      td.textContent = txt;
       if (ci === 0) td.className = 'idx';
       else if (txt !== '' && /^-?\d+(\.\d+)?$/.test(txt)) td.className = 'num';
+      td.textContent = txt;
       td.title = txt;
+
+      const f = fieldMap[ci];
+      if (f && f.ro) {
+        td.classList.add('readonly');
+        td.title = `${txt}　（来自同编号频谱文件，只读）`;
+      } else if (f) {
+        const isDirty = (state.editedCells || new Set()).has(`${idx}:${ci}`);
+        td.classList.add('editable');
+        if (isDirty) td.classList.add('modified');
+        td.title = `${txt}　（双击或直接输入可修改）`;
+        td.dataset.col = ci;
+        td.addEventListener('click', ev => {
+          // 单击仍用于选中行，仅当已在编辑态才吞掉
+          if (td.querySelector('input')) ev.stopPropagation();
+        });
+        td.addEventListener('dblclick', ev => {
+          ev.stopPropagation();
+          beginEdit(td, idx, ci, f, txt);
+        });
+      }
       tr.appendChild(td);
     });
     if (state.selectedFile && row[1] === state.selectedFile) tr.classList.add('sel');
     tr.addEventListener('click', () => selectRow(idx));
-    tr.addEventListener('dblclick', () => reveal(row[1]));
     frag.appendChild(tr);
   });
   tbody.appendChild(frag);
 
   const empty = $('#tableEmpty');
+  const filteredOut = state.rows.length && !rows.length;
   if (!rows.length) {
     empty.hidden = false;
-    empty.textContent = emptyMsg || (state.note || '该分类暂无数据');
+    empty.textContent = filteredOut
+      ? '没有符合当前条件的数据，请调整或清空筛选条件'
+      : (emptyMsg || state.note || '该分类暂无数据');
   } else {
     empty.hidden = true;
   }
+  updateFpStat();
+}
+
+function toggleSort(ci) {
+  if (state.sort.col !== ci) {
+    state.sort = { col: ci, dir: 1 };
+  } else {
+    // 升序 → 降序 → 取消
+    state.sort.dir = state.sort.dir === 1 ? -1 : 0;
+    if (state.sort.dir === 0) state.sort.col = -1;
+  }
+  renderTable();
+}
+
+/* ---------- 单元格就地编辑 ---------- */
+function beginEdit(td, idx, ci, field, cur) {
+  if (td.querySelector('input')) return;
+  const input = document.createElement('input');
+  input.className = 'cell-input';
+  input.type = 'text';
+  input.value = cur === '—' ? '' : cur;
+  if (field.t === 'num') input.inputMode = 'decimal';
+  td.textContent = '';
+  td.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    renderTable();
+  };
+
+  const commit = async () => {
+    if (done) return;
+    const val = input.value.trim();
+    if (val === (cur === '—' ? '' : cur)) return cancel();
+    done = true;
+    await saveCell(idx, ci, field, val, cur);
+  };
+
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+    else if (ev.key === 'Tab') { ev.preventDefault(); commit(); }
+  });
+  input.addEventListener('blur', () => { if (!done) commit(); });
+}
+
+async function saveCell(idx, ci, field, val, oldTxt) {
+  const row = state.rows[idx];
+  const file = row[1];
+  try {
+    await postJSON('/api/edit', { file, path: field.p, value: val });
+  } catch (e) {
+    toast('保存失败：' + e.message, 3200);
+    return renderTable();
+  }
+
+  // 本地同步：更新表格显示 & 曲线数据
+  const shown = field.t === 'num'
+    ? (val === '' ? '—' : (Number(val).toFixed(1)))
+    : val;
+  row[ci] = shown;
+
+  if (!state.editedCells) state.editedCells = new Set();
+  state.editedCells.add(`${idx}:${ci}`);
+  if (val === '' || val === String(oldTxt)) state.editedCells.delete(`${idx}:${ci}`);
+
+  state.detail = null;
+  state.cache.delete(file);
+  const allCells = Object.keys(state.fields[idx] || {}).filter(k => state.editedCells.has(`${idx}:${k}`));
+  state.editCount = Math.max(state.editCount || 0, allCells.length);
+  updateEditBadge();
+
+  renderTable();
+  const td = $('#tbl tbody tr[data-i="' + idx + '"] td:nth-child(' + (ci + 1) + ')');
+  if (td) { td.classList.add('dirty-flash'); }
+  toast(`已记录修改（原始 AWA 文件未改动）`, 1600);
+
+  if (state.selectedFile === file) {
+    await loadDetail(file);
+  }
+}
+
+function updateEditBadge() {
+  const n = state.editCount || 0;
+  const badge = $('#editBadge');
+  badge.textContent = n;
+  badge.hidden = !n;
+  $('#btnRevert').disabled = !n;
+}
+
+async function revertEdits() {
+  const file = state.selectedFile && state.editedCells &&
+    [...state.editedCells].some(k => state.rows[Number(k.split(':')[0])]?.[1] === state.selectedFile)
+    ? state.selectedFile : null;
+  const scope = file ? `文件 ${file} 的` : '本目录全部';
+  if (!confirm(`确定撤销${scope}修改吗？\n原始 AWA 文件不受影响，撤销后显示回到仪器原始值。`)) return;
+  try {
+    const j = await postJSON('/api/revert', file ? { file } : {});
+    state.editedCells = new Set();
+    state.editCount = j.count || 0;
+    state.cache.clear();
+    updateEditBadge();
+    const data = await api('/api/table?cat=' + encodeURIComponent(state.cat));
+    state.rows = data.rows;
+    state.fields = data.fields || [];
+    renderTable();
+    if (state.selectedFile) await loadDetail(state.selectedFile);
+    toast(`已撤销 ${j.reverted} 处修改`, 2000);
+  } catch (e) {
+    toast('撤销失败：' + e.message, 3000);
+  }
+}
+
+/* ---------- 筛选面板 ---------- */
+function buildFilterCols() {
+  const rowsEl = $('#fpRows');
+  rowsEl.innerHTML = '';
+  state.conds = [];
+}
+
+function addCond() {
+  const col = 2 < state.headers.length ? 2 : 0;
+  state.conds.push({ col, op: 'contains', val: '', val2: '' });
+  renderCondRows();
+}
+
+function renderCondRows() {
+  const rowsEl = $('#fpRows');
+  rowsEl.innerHTML = '';
+  if (!state.conds.length) {
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = '还没有条件。点【+ 添加条件】按测点名、日期、声级等任意列组合筛选。';
+    rowsEl.appendChild(hint);
+  }
+
+  state.conds.forEach((cond, i) => {
+    const row = document.createElement('div');
+    row.className = 'fp-row';
+
+    const selCol = document.createElement('select');
+    selCol.className = 'fp-col';
+    state.headers.forEach(([label], ci) => {
+      if (ci === 0) return;                       // 序号无筛选意义
+      const o = document.createElement('option');
+      o.value = ci;
+      o.textContent = label;
+      if (ci === cond.col) o.selected = true;
+      selCol.appendChild(o);
+    });
+    selCol.addEventListener('change', () => {
+      cond.col = Number(selCol.value);
+      renderTable();
+    });
+
+    const selOp = document.createElement('select');
+    selOp.className = 'fp-op';
+    OPS.forEach(op => {
+      const o = document.createElement('option');
+      o.value = op.k;
+      o.textContent = op.label;
+      if (op.k === cond.op) o.selected = true;
+      selOp.appendChild(o);
+    });
+    selOp.addEventListener('change', () => {
+      cond.op = selOp.value;
+      renderCondRows();
+      renderTable();
+    });
+
+    const needVal = !['empty', 'notEmpty'].includes(cond.op);
+    const inp = document.createElement('input');
+    inp.className = 'fp-val';
+    inp.placeholder = '值';
+    inp.value = cond.val || '';
+    inp.disabled = !needVal;
+    inp.addEventListener('input', () => {
+      cond.val = inp.value;
+      renderTable();
+    });
+    inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') renderTable(); });
+
+    row.appendChild(selCol);
+    row.appendChild(selOp);
+    row.appendChild(inp);
+
+    if (cond.op === 'between') {
+      const inp2 = document.createElement('input');
+      inp2.className = 'fp-val2';
+      inp2.placeholder = '上限';
+      inp2.value = cond.val2 || '';
+      inp2.addEventListener('input', () => {
+        cond.val2 = inp2.value;
+        renderTable();
+      });
+      row.appendChild(inp2);
+    }
+
+    const del = document.createElement('button');
+    del.className = 'fp-del';
+    del.textContent = '×';
+    del.title = '删除该条件';
+    del.addEventListener('click', () => {
+      state.conds.splice(i, 1);
+      renderCondRows();
+      renderTable();
+    });
+    row.appendChild(del);
+    rowsEl.appendChild(row);
+  });
+
+  const n = activeConds().length;
+  const badge = $('#filterBadge');
+  badge.textContent = n;
+  badge.hidden = !n;
+  updateFpStat();
+}
+
+function updateFpStat() {
+  const el = $('#fpStat');
+  if (!el) return;
+  const shown = visibleRows().length;
+  const total = state.rows.length;
+  const n = activeConds().length;
+  const sortTxt = state.sort.col >= 0 && state.sort.dir
+    ? `　排序：${state.headers[state.sort.col]?.[0] || ''} ${state.sort.dir > 0 ? '升序' : '降序'}`
+    : '';
+  el.textContent = n
+    ? `符合条件 ${shown} 行 / 共 ${total} 行${sortTxt}`
+    : `全部 ${total} 行${sortTxt}`;
 }
 
 /* ============================================================ 选中与详情 */
@@ -522,9 +920,9 @@ function drawSpectrum(rec) {
   ctx.clip();
   active.forEach(m => {
     const pts = bands
-      .map((b, i) => ({ x: xOf(i), y: rec.metrics[m.key]?.[b] }))
+      .map((b, i) => ({ x: xOf(i), y: rec.metrics[m.key]?.[b], b }))
       .filter(p => p.y !== null && p.y !== undefined)
-      .map(p => ({ x: p.x, y: yOf(p.y) }));
+      .map(p => ({ x: p.x, y: yOf(p.y), b: p.b, v: p.y }));
     if (!pts.length) return;
     ctx.strokeStyle = m.color;
     ctx.lineWidth = 1.6;
@@ -536,8 +934,26 @@ function drawSpectrum(rec) {
       ctx.fillStyle = m.color;
       pts.forEach(p => ctx.fillRect(p.x - 1.6, p.y - 1.6, 3.2, 3.2));
     }
+    // 记住屏幕坐标，供点击命中和悬停高亮
+    m._pts = pts;
   });
   ctx.restore();
+
+  // 悬停/编辑高亮的点
+  const hp = chartHit.point;
+  if (hp) {
+    ctx.save();
+    ctx.strokeStyle = '#e05a3a';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(hp.x, hp.y, 5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#e05a3a';
+    ctx.font = '11.5px Consolas,"Segoe UI",sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${fmtHz(hp.b)}Hz  ${hp.v.toFixed(1)} dB`, hp.x + 9, hp.y - 7);
+    ctx.restore();
+  }
 
   // 右下角信息
   if (active.length === 0) {
@@ -546,6 +962,82 @@ function drawSpectrum(rec) {
     ctx.textAlign = 'center';
     ctx.fillText('全部曲线已隐藏，请在上方勾选', a.x + a.w / 2, a.y + a.h / 2);
   }
+}
+
+/* ---------- 曲线点命中与就地编辑 ---------- */
+const chartHit = { point: null, metric: null };
+
+function hitPoint(ev) {
+  const rec = state.detail;
+  if (!rec || !['1/3OCT', 'OCT'].includes(rec.kind)) return null;
+  const rect = canvas.getBoundingClientRect();
+  const mx = ev.clientX - rect.left;
+  const my = ev.clientY - rect.top;
+  let best = null;
+  let bestD = 12;                       // 命中半径（px）
+  METRICS.forEach(m => {
+    if (!state.vis[m.key] || !m._pts) return;
+    m._pts.forEach(p => {
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < bestD) { bestD = d; best = { ...p, metric: m.key }; }
+    });
+  });
+  return best;
+}
+
+canvas.addEventListener('mousemove', ev => {
+  const p = hitPoint(ev);
+  const rec = state.detail;
+  if (!p) {
+    if (chartHit.point) { chartHit.point = null; draw(); }
+    canvas.style.cursor = '';
+    canvas.title = '';
+    return;
+  }
+  canvas.style.cursor = 'pointer';
+  canvas.title = `${p.metric} · ${fmtHz(p.b)}Hz = ${p.v.toFixed(1)} dB（单击可修改）`;
+  if (!chartHit.point || chartHit.point.x !== p.x || chartHit.point.y !== p.y) {
+    chartHit.point = p;
+    chartHit.metric = p.metric;
+    draw();
+  }
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (chartHit.point) { chartHit.point = null; draw(); }
+});
+
+canvas.addEventListener('click', ev => {
+  const p = hitPoint(ev);
+  if (!p) return;
+  editPoint(p);
+});
+
+function editPoint(p) {
+  const rec = state.detail;
+  const path = rec?.editPaths?.[p.metric]?.[p.b];
+  if (!path) return toast('该点不可编辑');
+  const val = prompt(
+    `${p.metric}  ·  ${fmtHz(p.b)} Hz\n当前值 ${p.v.toFixed(1)} dB\n\n输入新值（留空撤销该点修改）：`,
+    p.v.toFixed(1));
+  if (val === null) return;
+  const num = val.trim();
+  if (num !== '' && !/^-?\d+(\.\d+)?$/.test(num)) return toast('请输入数字', 2000);
+
+  postJSON('/api/edit', { file: rec.file, path, value: num })
+    .then(async () => {
+      state.cache.delete(rec.file);
+      state.editCount = Math.max(state.editCount || 0, 1);
+      updateEditBadge();
+      chartHit.point = null;
+      await loadDetail(rec.file);
+      const data = await api('/api/table?cat=' + encodeURIComponent(state.cat));
+      state.rows = data.rows;
+      state.fields = data.fields || [];
+      renderTable();
+      toast('已记录修改（原始 AWA 文件未改动）', 1600);
+    })
+    .catch(e => toast('保存失败：' + e.message, 3000));
 }
 
 /* ---------- 声级分布 ---------- */
@@ -671,10 +1163,16 @@ function clearAll() {
   state.cleared = true;
   state.rows = [];
   state.headers = [];
+  state.fields = [];
+  state.conds = [];
+  state.editCount = 0;
+  state.editedCells = new Set();
   state.kind = 'empty';
   state.selectedFile = null;
   state.detail = null;
   state.cache.clear();
+  updateEditBadge();
+  updateFpStat();
   renderTable('数据已清空，请点击【数据读取】重新加载');
   resetChart();
   $('#curvebar').hidden = true;
@@ -692,6 +1190,28 @@ $('#btnClear').addEventListener('click', clearAll);
 $('#filter').addEventListener('input', e => {
   state.filter = e.target.value.trim();
   renderTable();
+});
+
+/* -------- 筛选面板 -------- */
+$('#btnFilter').addEventListener('click', () => {
+  const p = $('#filterPanel');
+  p.hidden = !p.hidden;
+  if (!p.hidden && !state.conds.length) addCond();
+});
+$('#fpClose').addEventListener('click', () => { $('#filterPanel').hidden = true; });
+$('#fpAdd').addEventListener('click', () => { addCond(); renderTable(); });
+$('#fpReset').addEventListener('click', () => {
+  state.conds = [];
+  state.sort = { col: -1, dir: 1 };
+  renderCondRows();
+  renderTable();
+  toast('已清空筛选与排序');
+});
+$('#btnRevert').addEventListener('click', revertEdits);
+
+/* 表格空白处双击不再触发文件定位，改为提示可编辑 */
+$('#tbl').addEventListener('dblclick', e => {
+  if (e.target.closest('td')) return;
 });
 
 $$('.mod').forEach(btn => {

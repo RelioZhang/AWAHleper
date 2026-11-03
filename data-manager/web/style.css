@@ -317,7 +317,22 @@ thead th{
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
+  cursor:pointer;
+  user-select:none;
 }
+thead th:hover{background:linear-gradient(180deg,#f4fafe,#ddeaf6);color:var(--blue-deep);}
+thead th .sortmark{
+  display:inline-block;
+  width:9px;
+  margin-left:3px;
+  color:#b7c4d1;
+  font-size:9px;
+  vertical-align:1px;
+}
+thead th.sorted{color:var(--blue-deep);}
+thead th.sorted .sortmark{color:var(--blue);}
+thead th.nosort{cursor:default;}
+thead th.nosort:hover{background:linear-gradient(180deg,#fafcfe 0%,#e9f0f7 100%);color:#3d4f61;}
 tbody td{
   height:23px;
   padding:0 8px;
@@ -616,3 +631,140 @@ tbody td.idx{color:var(--text-3);text-align:right;font-family:Consolas,monospace
   .curvebar{flex-basis:54px;}
   .cstub-head,.cstub-val{font-size:10.5px;}
 }
+
+/* ================= 可编辑单元格 ================= */
+tbody td.editable{position:relative;cursor:cell;}
+tbody td.editable:hover{
+  background:#eef8ee !important;
+  box-shadow:inset 0 0 0 1px #a8d5a8;
+}
+tbody td.editable::after{
+  content:"";
+  position:absolute;
+  right:2px;
+  bottom:2px;
+  width:0;height:0;
+  border-left:4px solid transparent;
+  border-bottom:4px solid #a8cf9f;
+  opacity:0;
+  transition:opacity .12s;
+}
+tbody td.editable:hover::after{opacity:1;}
+tbody td.modified{background:#fff8e1 !important;color:#8a5a00;font-weight:600;}
+tbody td.modified::before{
+  content:"";
+  position:absolute;
+  left:0;top:0;bottom:0;
+  width:2px;
+  background:#e0a33a;
+}
+tbody td.dirty-flash{animation:dirtyflash .8s ease-out;}
+@keyframes dirtyflash{
+  0%{background:#d8efd8;}
+  100%{background:#fff8e1;}
+}
+td .cell-input{
+  width:100%;
+  height:21px;
+  padding:0 4px;
+  border:1px solid var(--blue);
+  border-radius:2px;
+  outline:none;
+  font:inherit;
+  font-size:12.5px;
+  color:var(--text);
+  background:#fff;
+  box-shadow:0 0 0 2px rgba(43,127,196,.15);
+}
+table td.num .cell-input{text-align:right;}
+
+.act-badge{
+  min-width:15px;
+  height:15px;
+  margin-left:1px;
+  padding:0 4px;
+  border-radius:8px;
+  background:var(--blue);
+  color:#fff;
+  font-size:10px;
+  font-weight:700;
+  line-height:15px;
+  text-align:center;
+  font-style:normal;
+}
+.act-badge.edit{background:#e0a33a;}
+.act:disabled{opacity:.45;cursor:default;}
+.act:disabled:hover{border-color:#cddced;background:linear-gradient(180deg,#fff,#f2f7fc);color:#33506b;}
+
+/* ================= 筛选面板 ================= */
+.filterpanel{
+  flex:0 0 auto;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,#f7fbff,#eef5fb);
+  padding:8px 12px 9px;
+  max-height:38vh;
+  overflow:auto;
+}
+.fp-head{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:7px;
+  font-size:12px;
+}
+.fp-head b{color:#2c4b66;font-size:12.5px;}
+.fp-tip{color:var(--text-3);font-size:11.5px;}
+.fp-head-right{margin-left:auto;display:flex;gap:10px;}
+.linkbtn{
+  border:0;
+  padding:0;
+  background:none;
+  color:#2b7fc4;
+  font-size:12px;
+  cursor:pointer;
+}
+.linkbtn:hover{color:#1b5f98;text-decoration:underline;}
+.fp-rows{display:flex;flex-direction:column;gap:5px;}
+.fp-row{display:flex;align-items:center;gap:6px;}
+.fp-row select,.fp-row input{
+  height:26px;
+  padding:0 6px;
+  border:1px solid #cfdce9;
+  border-radius:3px;
+  font-size:12px;
+  color:var(--text);
+  background:#fff;
+  outline:none;
+}
+.fp-row select:focus,.fp-row input:focus{
+  border-color:var(--blue);
+  box-shadow:0 0 0 2px rgba(43,127,196,.12);
+}
+.fp-row .fp-col{width:150px;}
+.fp-row .fp-op{width:96px;}
+.fp-row .fp-val{width:130px;}
+.fp-row .fp-val2{width:130px;}
+.fp-row .fp-del{
+  width:22px;height:22px;
+  border:1px solid transparent;
+  border-radius:3px;
+  background:transparent;
+  color:#a4b1be;
+  font-size:14px;
+  line-height:1;
+}
+.fp-row .fp-del:hover{background:#fdeceb;color:#c9403a;border-color:#f0c9c5;}
+.fp-foot{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:8px;
+  padding-top:7px;
+  border-top:1px dashed #d7e4ee;
+}
+.fp-stat{font-size:12px;color:#3a6b91;font-weight:600;}
+.fp-actions{margin-left:auto;display:flex;gap:6px;}
+.fp-actions .btn{height:26px;padding:0 12px;}
+
+tbody td.readonly{cursor:help;color:#8394a3;}
+tbody td.readonly:hover{background:#f6f9fc !important;}
