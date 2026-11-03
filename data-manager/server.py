@@ -645,8 +645,9 @@ class Store:
                 rows.append([str(i), r["file"], v["point"], v["date"], v["time"],
                              v["ts"], self._f(spl.get("A")), self._f(spl.get("C")),
                              self._f(spl.get("Z")), self._f(spl.get("A"))])
-                cells = {2: dict(p="point", t="text"), 3: dict(p="date", t="text"),
-                         4: dict(p="time", t="text")}
+                cells = {2: dict(p="point", t="text", one="group"),
+                         3: dict(p="date", t="text", one="group"),
+                         4: dict(p="time", t="text", one="group")}
                 for col, key in ((6, "A"), (7, "C"), (8, "Z"), (9, "A")):
                     cells[col] = dict(p=f"spl:Leq,T:{key}", t="num")
                 fields.append(cells)
@@ -666,8 +667,9 @@ class Store:
                 metric, st = next(iter(v["stats"].items()), ("A F", {}))
                 rows.append([str(i), r["file"], v["point"], v["date"], v["time"]] +
                             [self._f(st.get(k)) for k in keys])
-                cells = {2: dict(p="point", t="text"), 3: dict(p="date", t="text"),
-                         4: dict(p="time", t="text")}
+                cells = {2: dict(p="point", t="text", one="group"),
+                         3: dict(p="date", t="text", one="group"),
+                         4: dict(p="time", t="text", one="group")}
                 for col, k in enumerate(keys, 5):
                     cells[col] = dict(p=f"stat:{metric}:{k}", t="num")
                 fields.append(cells)
@@ -692,8 +694,8 @@ class Store:
                     rows.append([str(n), r["file"], v["point"], v["date"], metric] +
                                 [self._f(spl.get(k)) for k in
                                  ("A", "C", "Z", "U", "T", "B")])
-                    cells = {2: dict(p="point", t="text"),
-                             3: dict(p="date", t="text", one="file")}
+                    cells = {2: dict(p="point", t="text", one="group"),
+                             3: dict(p="date", t="text", one="group")}
                     for col, k in enumerate(("A", "C", "Z", "U", "T", "B"), 5):
                         cells[col] = dict(p=f"spl:{metric}:{k}", t="num")
                     fields.append(cells)
@@ -713,7 +715,8 @@ class Store:
                 meta = self._sibling(r["file"]) or {}
                 point = v["point"] or meta.get("point", "")
                 date = v["date"] or meta.get("date", "")
-                # NUM 文件本身无表头信息，测点名/日期来自同编号频谱文件，只读
+                # NUM 文件本身无表头，测点名/日期取自同编号的频谱文件；
+                # 修改会同步写回该组全部文件，所以这里也可编辑
                 if d:
                     lo, hi = d[0][0], d[-1][0]
                     pk = max(d, key=lambda x: x[1])
@@ -723,7 +726,8 @@ class Store:
                 else:
                     rows.append([str(i), r["file"], point, date,
                                  "—", "—", "—", "0"])
-                fields.append({2: dict(ro=1), 3: dict(ro=1)})
+                fields.append({2: dict(p="point", t="text"),
+                               3: dict(p="date", t="text", one="group")})
             return dict(headers=headers, rows=rows, fields=fields, kind="num",
                         note=f"共 {len(files)} 份声级分布文件")
 
@@ -771,8 +775,35 @@ class Store:
         return out
 
     # ---------------- 编辑 ----------------
-    def update(self, name: str, path: str, value) -> dict:
-        """记录一条修改到侧车文件；.AWA 原文件保持只读。"""
+    # ---------------- 测量组（同编号的 1_3_/OCT_/STA_/NUM_） ----------------
+    @staticmethod
+    def group_of(name: str) -> str:
+        """取文件名的测量编号：1_3_0001 / OCT_0001 / STA_0001 -> '0001'。
+
+        同一编号的四类文件是同一次测量的不同导出视图，
+        测点名/日期/时间这类元数据必须一起改，否则表格里会对不上。
+        """
+        stem = os.path.splitext(name)[0]
+        m = re.search(r"(\d+)\D*$", stem)
+        return m.group(1) if m else stem
+
+    def group_members(self, name: str) -> list[str]:
+        """同组中确实存在的文件，频谱优先（把用户的修改值当权威）。"""
+        gid = self.group_of(name)
+        order = {"1/3OCT": 0, "OCT": 1, "STA": 2, "NUM": 3}
+        members = [n for n in self.records if self.group_of(n) == gid
+                   and self.records[n].get("kind") in order]
+        members.sort(key=lambda n: (order.get(self.records[n]["kind"], 9), n))
+        return members
+
+    def update(self, name: str, path: str, value: str,
+               group: bool = True) -> dict:
+        """记录一条修改到侧车文件；.AWA 原文件保持只读。
+
+        group=True 时，元数据（测点名/日期/时间）会同步到同组所有文件，
+        声级数值（spl/stat/band/dist）只属于当前文件，不联动。
+        """
+        self.ensure()                       # 直接调接口时也能用
         if name not in self.records:
             raise ValueError(f"未找到文件：{name}")
         head = path.split(":")[0]
@@ -781,6 +812,7 @@ class Store:
 
         if head in ("point", "date", "time"):
             val = None if value in (None, "") else str(value).strip()
+            targets = self.group_members(name) if group else [name]
         else:
             if value in (None, ""):
                 val = None
@@ -789,8 +821,12 @@ class Store:
                     val = round(float(str(value).strip()), 3)
                 except ValueError:
                     raise ValueError(f"请输入数字：{value}") from None
-        self.edits.set(name, path, val)
+            targets = [name]
+
+        for t in targets:
+            self.edits.set(t, path, val)
         return dict(file=name, path=path, value=val,
+                    targets=targets, groupId=self.group_of(name),
                     edits=self.edits.count())
 
     def revert(self, name: str | None = None) -> int:

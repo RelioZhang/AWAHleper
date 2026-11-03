@@ -247,6 +247,7 @@ async function loadTable(cat) {
     state.detail = null;
     state.editCount = j.editCount || 0;
     state.sort = { col: -1, dir: 1 };
+    applySavedSort();                 // 恢复上次的排序（按列名匹配）
     state.conds = [];
     updateEditBadge();
     buildFilterCols();
@@ -421,8 +422,11 @@ function renderTable(emptyMsg) {
       } else if (f) {
         const isDirty = (state.editedCells || new Set()).has(`${idx}:${ci}`);
         td.classList.add('editable');
+        if (f.one === 'group') td.classList.add('grp');
         if (isDirty) td.classList.add('modified');
-        td.title = `${txt}　（双击或直接输入可修改）`;
+        td.title = f.one === 'group'
+          ? `${txt}　（双击修改，将同步到同编号的 1/3OCT·OCT·STA·NUM 文件）`
+          : `${txt}　（双击或直接输入可修改）`;
         td.dataset.col = ci;
         td.addEventListener('click', ev => {
           // 单击仍用于选中行，仅当已在编辑态才吞掉
@@ -454,6 +458,32 @@ function renderTable(emptyMsg) {
   updateFpStat();
 }
 
+/* ---------- 排序状态持久化 ---------- */
+/* 各分类列索引不同，用「列名」做键才能在分类间复用；存 localStorage 跨会话保留 */
+const SORT_KEY = 'awa.sort.v1';
+
+function loadSortMap() {
+  try {
+    const j = JSON.parse(localStorage.getItem(SORT_KEY) || '{}');
+    return (j && typeof j === 'object') ? j : {};
+  } catch (e) { return {}; }
+}
+
+function saveSort() {
+  const map = loadSortMap();
+  const colName = state.sort.col >= 0 ? state.headers[state.sort.col]?.[0] : '';
+  if (!colName || !state.sort.dir) delete map[state.cat];
+  else map[state.cat] = { col: colName, dir: state.sort.dir };
+  try { localStorage.setItem(SORT_KEY, JSON.stringify(map)); } catch (e) { /* 隐私模式忽略 */ }
+}
+
+function applySavedSort() {
+  const saved = loadSortMap()[state.cat];
+  if (!saved || !saved.dir) return;
+  const ci = state.headers.findIndex(h => h[0] === saved.col);
+  if (ci >= 0) state.sort = { col: ci, dir: saved.dir };
+}
+
 function toggleSort(ci) {
   if (state.sort.col !== ci) {
     state.sort = { col: ci, dir: 1 };
@@ -462,6 +492,7 @@ function toggleSort(ci) {
     state.sort.dir = state.sort.dir === 1 ? -1 : 0;
     if (state.sort.dir === 0) state.sort.col = -1;
   }
+  saveSort();
   renderTable();
 }
 
@@ -502,39 +533,61 @@ function beginEdit(td, idx, ci, field, cur) {
   input.addEventListener('blur', () => { if (!done) commit(); });
 }
 
+/* 测量组：同一编号的 1_3_/OCT_/STA_/NUM_ 是同一次测量，元数据需同步 */
+function groupIdOf(file) {
+  const m = String(file).replace(/\.[^.]+$/, '').match(/(\d+)\D*$/);
+  return m ? m[1] : String(file);
+}
+
 async function saveCell(idx, ci, field, val, oldTxt) {
   const row = state.rows[idx];
   const file = row[1];
+  let res;
   try {
-    await postJSON('/api/edit', { file, path: field.p, value: val });
+    res = await postJSON('/api/edit', { file, path: field.p, value: val });
   } catch (e) {
     toast('保存失败：' + e.message, 3200);
     return renderTable();
   }
 
-  // 本地同步：更新表格显示 & 曲线数据
   const shown = field.t === 'num'
     ? (val === '' ? '—' : (Number(val).toFixed(1)))
     : val;
-  row[ci] = shown;
 
+  // 组联动：同编号其他文件也一起改成同一个值
+  const gid = groupIdOf(file);
+  let synced = 0;
+  state.rows.forEach((r, i) => {
+    if (i !== idx && gid && groupIdOf(r[1]) === gid) {
+      r[ci] = shown;
+      if (!state.editedCells) state.editedCells = new Set();
+      state.editedCells.add(`${i}:${ci}`);
+      synced++;
+    }
+  });
+
+  row[ci] = shown;
   if (!state.editedCells) state.editedCells = new Set();
   state.editedCells.add(`${idx}:${ci}`);
   if (val === '' || val === String(oldTxt)) state.editedCells.delete(`${idx}:${ci}`);
 
   state.detail = null;
-  state.cache.delete(file);
-  const allCells = Object.keys(state.fields[idx] || {}).filter(k => state.editedCells.has(`${idx}:${k}`));
-  state.editCount = Math.max(state.editCount || 0, allCells.length);
+  state.cache.clear();                  // 组内文件都被改过，缓存全清
+  state.editCount = Math.max(state.editCount || 0, (res.edits || 0), 1);
   updateEditBadge();
 
   renderTable();
   const td = $('#tbl tbody tr[data-i="' + idx + '"] td:nth-child(' + (ci + 1) + ')');
-  if (td) { td.classList.add('dirty-flash'); }
-  toast(`已记录修改（原始 AWA 文件未改动）`, 1600);
+  if (td) td.classList.add('dirty-flash');
 
-  if (state.selectedFile === file) {
-    await loadDetail(file);
+  const colName = state.headers[ci]?.[0] || '';
+  const groupNote = (field.one === 'group')
+    ? `「${colName}」已同步到同组 ${synced + 1} 个文件`
+    : '已记录修改';
+  toast(`${groupNote}（原始 AWA 文件未改动）`, 2200);
+
+  if (state.selectedFile && groupIdOf(state.selectedFile) === gid) {
+    await loadDetail(state.selectedFile);
   }
 }
 
@@ -1203,6 +1256,7 @@ $('#fpAdd').addEventListener('click', () => { addCond(); renderTable(); });
 $('#fpReset').addEventListener('click', () => {
   state.conds = [];
   state.sort = { col: -1, dir: 1 };
+  saveSort();
   renderCondRows();
   renderTable();
   toast('已清空筛选与排序');

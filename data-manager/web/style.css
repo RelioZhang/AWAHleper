@@ -768,3 +768,12 @@ table td.num .cell-input{text-align:right;}
 
 tbody td.readonly{cursor:help;color:#8394a3;}
 tbody td.readonly:hover{background:#f6f9fc !important;}
+
+/* 组联动字段：右上角小蓝点（用 box-shadow 画，不占用 ::after，
+   以免盖掉右下角的可编辑三角标记） */
+tbody td.editable.grp{
+  background-image:radial-gradient(circle at calc(100% - 5px) 5px, #7fb4dd 2.1px, transparent 2.4px);
+}
+tbody td.editable.grp:hover{
+  background-image:radial-gradient(circle at calc(100% - 5px) 5px, #2b7fc4 2.4px, transparent 2.7px) !important;
+}
