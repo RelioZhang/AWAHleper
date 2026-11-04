@@ -15,11 +15,11 @@ import os
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QHeaderView, QLabel,
-                               QLineEdit, QMessageBox, QPushButton,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox,
+                               QFileDialog, QFormLayout, QHBoxLayout,
+                               QHeaderView, QLabel, QLineEdit, QMessageBox,
+                               QPushButton, QTableWidget, QTableWidgetItem,
+                               QVBoxLayout, QWidget)
 
 import report as R
 import report_chart as RC
@@ -45,7 +45,7 @@ class NrPreview(QWidget):
         super().__init__(parent)
         self.data = None
         self.hint = "在左侧清单里选一个测点"
-        self.setMinimumHeight(240)
+        self.setMinimumHeight(180)
 
     def set_data(self, data, hint=""):
         self.data = data
@@ -159,12 +159,37 @@ class ReportPage(QWidget):
         self.lb_result.setStyleSheet(
             f"color:{BLUE_DEEP};font-size:13px;font-weight:700;")
         self.lb_result.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        pl.addWidget(self.lb_result)
+
+        resrow = QHBoxLayout()
+        resrow.setContentsMargins(0, 0, 0, 0)
+        resrow.setSpacing(8)
+        resrow.addWidget(self.lb_result, 1)
+        self.btn_copy = QPushButton("复制数据", objectName="act")
+        self.btn_copy.setCursor(Qt.PointingHandCursor)
+        self.btn_copy.setToolTip("按 Tab 分隔复制这张表，可直接粘到 Word / Excel")
+        self.btn_copy.clicked.connect(self.copy_values)
+        resrow.addWidget(self.btn_copy)
+        pl.addLayout(resrow)
 
         self.lb_note = QLabel("")
         self.lb_note.setWordWrap(True)
         self.lb_note.setStyleSheet(f"color:{TEXT3};font-size:11.5px;")
         pl.addWidget(self.lb_note)
+
+        # 频带明细：报告要把这些数抄进表 3.2-x / 表 3.3-x，不能只给一个评级
+        self.nr_table = QTableWidget(0, 4)
+        self.nr_table.verticalHeader().setVisible(False)
+        self.nr_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.nr_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.nr_table.setWordWrap(False)
+        self.nr_table.horizontalHeader().setHighlightSections(False)
+        self.nr_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.nr_table.verticalHeader().setDefaultSectionSize(19)
+        self.nr_table.setFixedHeight(196)
+        self.nr_table.setStyleSheet(
+            f"QTableWidget{{background:#fff;border:1px solid {LINE};"
+            f"gridline-color:#eef3f8;font-size:11.5px;}}")
+        pl.addWidget(self.nr_table)
 
         rl.addWidget(panel)
         self.preview = NrPreview()
@@ -365,6 +390,7 @@ class ReportPage(QWidget):
             self.lb_result.setStyleSheet(f"color:{WARN};font-size:12px;"
                                          f"font-weight:700;")
             self.lb_note.setText(r.error)
+            self.nr_table.setRowCount(0)
             self.preview.set_data(None, r.error or "没有可画的曲线")
             return
 
@@ -387,15 +413,66 @@ class ReportPage(QWidget):
             if bad:
                 note += f"　扣分频带：{'、'.join(bad)} Hz"
             self.lb_note.setText(note)
+            self._fill_grid(R.BANDS_THIRD, r.bands, "NR")
             self.preview.set_data(RC.ChartData(
                 R.BANDS_THIRD, r.bands, r.nic,
                 title=f"{r.item.name}　声压级差 NR"), "")
         else:
             note = f"文件 {r.item.file}"
             if r.nc is not None:
-                note += f"　NC 由仪器给出" if r.nc else ""
+                note += f"　NC 取自仪器"
             self.lb_note.setText(note)
+            self._fill_grid(R.BANDS_OCT, r.bands, "声级")
             self.preview.set_data(None, "噪声级测点见「噪声级」工作表")
+
+    def _fill_grid(self, bands, values, unit: str):
+        """把逐个频带的数值摊成左右两栏（9+9 / 4+4），和报告表的版式一致。"""
+        n = len(bands)
+        half = (n + 1) // 2
+        self.nr_table.clearContents()
+        self.nr_table.setRowCount(half)
+        self.nr_table.setHorizontalHeaderLabels(
+            ["频带", f"{unit} (dB)", "频带", f"{unit} (dB)"])
+        for i in range(half):
+            for blk in (0, 1):
+                j = i + blk * half
+                if j >= n:
+                    continue
+                c0, c1 = blk * 2, blk * 2 + 1
+                it_b = QTableWidgetItem(R.band_text(bands[j]))
+                it_b.setTextAlignment(Qt.AlignCenter)
+                it_b.setForeground(QBrush(QColor(TEXT2)))
+                it_v = QTableWidgetItem(str(R.half_up(values[j])))
+                it_v.setTextAlignment(Qt.AlignCenter)
+                f = QFont("Consolas")
+                f.setPointSizeF(9.5)
+                it_v.setFont(f)
+                self.nr_table.setItem(i, c0, it_b)
+                self.nr_table.setItem(i, c1, it_v)
+
+    def copy_values(self):
+        """复制当前测点的频带表（Tab 分隔），直接粘到 Word 就是一张表。"""
+        if not (0 <= self.cur < len(self.results)):
+            return
+        r = self.results[self.cur]
+        if not r.ok:
+            return
+        bands = R.BANDS_THIRD if r.item.kind == R.KIND_INSUL else R.BANDS_OCT
+        unit = "NR" if r.item.kind == R.KIND_INSUL else "声级"
+        half = (len(bands) + 1) // 2
+        lines = [f"频带\t{unit}(dB)\t频带\t{unit}(dB)"]
+        for i in range(half):
+            row = []
+            for blk in (0, 1):
+                j = i + blk * half
+                if j >= len(bands):
+                    row += ["", ""]
+                    continue
+                row += [R.band_text(bands[j]), str(R.half_up(r.bands[j]))]
+            lines.append("\t".join(row))
+        head = f"{r.item.name}\t{r.value or ''}"
+        QApplication.clipboard().setText(head + "\n" + "\n".join(lines))
+        self.lb_hint.setText(f"已复制 {r.item.name} 的 {len(bands)} 个频带值")
 
     def _apply_form(self):
         if self._loading or not (0 <= self.cur < len(self.items)):
