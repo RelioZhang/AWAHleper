@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AWA 声学数据管理 V3.0</title>
-<link rel="stylesheet" href="/style.css?v=3.0.1">
+<link rel="stylesheet" href="/style.css?v=3.1.0">
 </head>
 <body>
 <div class="app">
@@ -56,19 +56,30 @@
       </span>
       <span class="ml">数据整理</span>
     </button>
-    <button class="mod" data-mod="report">
+    <button class="mod" data-mod="report_noise">
       <span class="mi">
         <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
-          <!-- 报告生成：文档 + 折线 -->
-          <rect x="8" y="5" width="20" height="26" rx="2" fill="#f0f6fc" stroke="#6f97b8" stroke-width="1.6"/>
-          <path d="M12 11h12M12 16h12M12 21h7" stroke="#9db8d0" stroke-width="1.6" stroke-linecap="round"/>
-          <path d="M16 30l5-6 4 4 6-8" stroke="#e07a3a" stroke-width="2.2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="16" cy="30" r="1.8" fill="#e07a3a"/>
-          <circle cx="31" cy="20" r="1.8" fill="#e07a3a"/>
+          <!-- 噪声级：声波 -->
+          <path d="M9 20h3" stroke="#8fa6bb" stroke-width="2" stroke-linecap="round"/>
+          <path d="M14 14v12M19 10v20M24 15v10M29 17v6" stroke="#4f8fc0"
+                stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M33 12c2.6 5 2.6 11 0 16" stroke="#e07a3a" stroke-width="1.8"
+                fill="none" stroke-linecap="round"/>
         </svg>
       </span>
-      <span class="ml">报告生成</span>
+      <span class="ml">报告·噪声级</span>
+    </button>
+    <button class="mod" data-mod="report_insul">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <!-- 隔声：两层墙体 + 阻隔 -->
+          <rect x="7" y="8" width="7" height="24" rx="1.5" fill="#dbe8f4" stroke="#6f97b8" stroke-width="1.5"/>
+          <rect x="26" y="8" width="7" height="24" rx="1.5" fill="#dbe8f4" stroke="#6f97b8" stroke-width="1.5"/>
+          <path d="M14 20h12" stroke="#c96a3a" stroke-width="1.8" stroke-dasharray="3 2.5"/>
+          <path d="M16 13l8 14" stroke="#e05a3a" stroke-width="2.4" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="ml">报告·隔声</span>
     </button>
     <button class="mod" data-mod="info">
       <span class="mi">
@@ -202,24 +213,24 @@
     </div>
   </div>
 
+  <!-- 模式状态条：原始数据只读 / 数据整理可编辑（放在 main 外，避免参与横向 flex） -->
+  <div class="mode-bar" id="modeBar">
+    <span class="mb-icon" id="mbIcon"></span>
+    <span class="mb-text" id="mbText"></span>
+    <span class="mb-actions" id="mbActions"></span>
+  </div>
+
+  <!-- 标记过滤条（仅数据整理显示） -->
+  <div class="tagbar" id="tagBar" hidden>
+    <span class="tb-label">显示</span>
+    <button class="tagchip on" data-tag=""><span>全部</span><b>0</b></button>
+    <button class="tagchip" data-tag="噪声级"><span>噪声级</span><b>0</b></button>
+    <button class="tagchip" data-tag="隔声"><span>隔声</span><b>0</b></button>
+    <span class="tb-hint" id="tagHint"></span>
+  </div>
+
   <!-- ================= 主体（原始数据，只读） ================= -->
   <main class="body" id="viewRaw">
-
-    <!-- 标记过滤条（仅数据整理显示） -->
-    <div class="tagbar" id="tagBar" hidden>
-      <span class="tb-label">显示</span>
-      <button class="tagchip on" data-tag=""><span>全部</span><b>0</b></button>
-      <button class="tagchip" data-tag="噪声级"><span>噪声级</span><b>0</b></button>
-      <button class="tagchip" data-tag="隔声"><span>隔声</span><b>0</b></button>
-      <span class="tb-hint" id="tagHint"></span>
-    </div>
-
-    <!-- 模式状态条：原始数据只读 / 数据整理可编辑 -->
-    <div class="mode-bar" id="modeBar">
-      <span class="mb-icon" id="mbIcon"></span>
-      <span class="mb-text" id="mbText"></span>
-      <span class="mb-actions" id="mbActions"></span>
-    </div>
 
     <!-- 左：数据分类 -->
     <aside class="sidebar">
@@ -317,7 +328,7 @@
 
     <aside class="rp-left">
       <div class="rp-left-head">
-        <span>测点清单</span>
+        <span id="rpListHead">测点清单</span>
         <span class="rp-count" id="rpCount">0 条</span>
       </div>
       <div class="rp-actions">
@@ -327,28 +338,36 @@
         <button class="act" id="rpSave"><span>保存</span></button>
       </div>
       <div class="rp-tablewrap">
+        <!-- 噪声级：交叉表（倍频带为行，房间×工况为列），与报告表格一致 -->
+        <table id="rpNoiseTbl" hidden>
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+
+        <!-- 隔声：一测点一行 -->
         <table id="rpTbl">
           <thead>
             <tr>
               <th style="width:34px">#</th>
-              <th style="width:118px">测点名称</th>
-              <th style="width:56px">类型</th>
-              <th style="width:100px">内侧</th>
-              <th style="width:100px">外侧</th>
-              <th style="width:62px">实测值</th>
-              <th style="width:56px">判定</th>
+              <th style="width:112px">测点名称</th>
+              <th style="width:54px">类型</th>
+              <th style="width:96px">内侧</th>
+              <th style="width:96px">外侧</th>
+              <th style="width:58px">实测值</th>
+              <th style="width:52px">判定</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
+
         <div class="rp-empty" id="rpEmpty" hidden></div>
       </div>
     </aside>
 
     <section class="rp-right">
       <div class="rp-head">
-        <b>报告生成</b>
-        <span class="rp-hint">左侧是测点清单，右侧填内侧/外侧文件与设计值，曲线即时预览</span>
+        <b id="rpTitleLabel">报告生成</b>
+        <span class="rp-hint" id="rpHint">左侧是测点清单，右侧填内侧/外侧文件与设计值，曲线即时预览</span>
         <div class="ab-spacer"></div>
         <label class="rp-proj">项目名称
           <input id="rpProject" type="text" placeholder="样板房声学测试报告">
@@ -374,6 +393,10 @@
           </select></div>
         <div class="rp-field"><label>表号</label>
           <input id="rpTableNo" type="text" placeholder="3.2-1"></div>
+        <div class="rp-field" data-kind="噪声级"><label>房间</label>
+          <input id="rpRoom" type="text" placeholder="0806 大床房"></div>
+        <div class="rp-field" data-kind="噪声级"><label>工况</label>
+          <input id="rpCond" type="text" placeholder="FCU 低速"></div>
         <div class="rp-field"><label>内侧</label>
           <select id="rpInner" class="rp-sel"></select></div>
         <div class="rp-field"><label>外侧</label>
@@ -480,6 +503,6 @@
   <div class="loading-text">正在读取数据…</div>
 </div>
 
-<script src="/app.js?v=3.0.1"></script>
+<script src="/app.js?v=3.1.0"></script>
 </body>
 </html>
