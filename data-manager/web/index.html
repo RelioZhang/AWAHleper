@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AWA 声学数据管理</title>
+<title>AWA 声学数据管理 V3.0</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
         <path d="M4 20V10h3v10H4zm6 0V4h3v16h-3zm6 0v-7h3v7h-3z" fill="#fff" opacity=".92"/>
       </svg>
     </div>
-    <div class="tb-title">AWA 声学数据管理 <span class="ver">V1.0</span></div>
+    <div class="tb-title">AWA 声学数据管理 <span class="ver">V3.0</span></div>
     <div class="tb-badge" id="tbBadge">原始数据</div>
     <div class="tb-note" id="tbNote">本地服务 · 127.0.0.1</div>
     <div class="winbtns">
@@ -55,6 +55,20 @@
         </svg>
       </span>
       <span class="ml">数据整理</span>
+    </button>
+    <button class="mod" data-mod="report">
+      <span class="mi">
+        <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+          <!-- 报告生成：文档 + 折线 -->
+          <rect x="8" y="5" width="20" height="26" rx="2" fill="#f0f6fc" stroke="#6f97b8" stroke-width="1.6"/>
+          <path d="M12 11h12M12 16h12M12 21h7" stroke="#9db8d0" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M16 30l5-6 4 4 6-8" stroke="#e07a3a" stroke-width="2.2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="16" cy="30" r="1.8" fill="#e07a3a"/>
+          <circle cx="31" cy="20" r="1.8" fill="#e07a3a"/>
+        </svg>
+      </span>
+      <span class="ml">报告生成</span>
     </button>
     <button class="mod" data-mod="info">
       <span class="mi">
@@ -294,6 +308,105 @@
                 fill="none" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span>曲线区已折叠，点击展开</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= 报告生成 ================= -->
+  <main class="body rp-body" id="viewReport" hidden>
+
+    <aside class="rp-left">
+      <div class="rp-left-head">
+        <span>测点清单</span>
+        <span class="rp-count" id="rpCount">0 条</span>
+      </div>
+      <div class="rp-actions">
+        <button class="act primary" id="rpAdd"><span>添加测点</span></button>
+        <button class="act" id="rpDel"><span>删除</span></button>
+        <button class="act" id="rpPair"><span>按时序配对</span></button>
+        <button class="act" id="rpSave"><span>保存</span></button>
+      </div>
+      <div class="rp-tablewrap">
+        <table id="rpTbl">
+          <thead>
+            <tr>
+              <th style="width:34px">#</th>
+              <th style="width:118px">测点名称</th>
+              <th style="width:56px">类型</th>
+              <th style="width:100px">内侧</th>
+              <th style="width:100px">外侧</th>
+              <th style="width:62px">实测值</th>
+              <th style="width:56px">判定</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="rp-empty" id="rpEmpty" hidden></div>
+      </div>
+    </aside>
+
+    <section class="rp-right">
+      <div class="rp-head">
+        <b>报告生成</b>
+        <span class="rp-hint">左侧是测点清单，右侧填内侧/外侧文件与设计值，曲线即时预览</span>
+        <div class="ab-spacer"></div>
+        <label class="rp-proj">项目名称
+          <input id="rpProject" type="text" placeholder="样板房声学测试报告">
+        </label>
+        <button class="act primary" id="rpExport">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M8 15V7m0 0L5 10m3-3l3 3" stroke="currentColor" stroke-width="1.5"
+                  fill="none" stroke-linecap="round"/>
+            <path d="M2 5V2h12v3" stroke="currentColor" stroke-width="1.5"
+                  fill="none" stroke-linecap="round"/>
+          </svg>
+          <span>生成表格与曲线</span>
+        </button>
+      </div>
+
+      <div class="rp-form">
+        <div class="rp-field"><label>名称</label>
+          <input id="rpName" type="text" placeholder="0806 入户门"></div>
+        <div class="rp-field"><label>类型</label>
+          <select id="rpKind">
+            <option value="隔声">隔声</option>
+            <option value="噪声级">噪声级</option>
+          </select></div>
+        <div class="rp-field"><label>表号</label>
+          <input id="rpTableNo" type="text" placeholder="3.2-1"></div>
+        <div class="rp-field"><label>内侧</label>
+          <select id="rpInner" class="rp-sel"></select></div>
+        <div class="rp-field"><label>外侧</label>
+          <select id="rpOuter" class="rp-sel"></select></div>
+        <div class="rp-field"><label>设计值</label>
+          <input id="rpDesign" type="text" placeholder="NIC-28+ / NC-30"></div>
+      </div>
+
+      <div class="rp-preview">
+        <div class="rp-bands">
+          <div class="rp-bands-head">
+            <span id="rpRating">—</span>
+            <span class="rp-judge" id="rpJudge"></span>
+          </div>
+          <div class="rp-bands-body">
+            <table id="rpBandTbl">
+              <thead><tr>
+                <th>频带</th><th>NR (dB)</th>
+                <th>频带</th><th>NR (dB)</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="rp-chart">
+          <div class="rp-chart-title" id="rpChartTitle">选择左侧测点查看曲线</div>
+          <canvas id="rpCanvas"></canvas>
+          <div class="rp-legend">
+            <span><i style="background:#c96a3a"></i>NIC 轮廓</span>
+            <span><i style="background:#2b7fc4"></i>NR 实测</span>
+            <span><i style="background:#f3d2c4"></i>扣分频带</span>
+          </div>
+        </div>
       </div>
     </section>
   </main>
