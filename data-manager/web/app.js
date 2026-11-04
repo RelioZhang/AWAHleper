@@ -1958,8 +1958,14 @@ function applyReportKind() {
 
 function fillGroupSelects() {
   const opts = ['<option value="">（未选）</option>'];
+  // 只列已标记为当前类型的数据：隔声 -> 1/3OCT，噪声级 -> OCT
+  const want13 = rp.kind === '隔声';
   rp.groups.forEach(g => {
-    opts.push(`<option value="${g.f13}|${g.f11}">${g.label}</option>`);
+    if ((g.tag || '') !== rp.kind) return;
+    const f = want13 ? g.f13 : g.f11;
+    if (!f) return;
+    const tail = g.date ? ` ${(g.date || '').slice(5)} ${g.time || ''}` : '';
+    opts.push(`<option value="${f}|">${g.gid}　${g.point || ''}${tail}</option>`);
   });
   const html = opts.join('');
   $('#rpInner').innerHTML = html;
@@ -2139,6 +2145,9 @@ function selectReportRow(i) {
   $('#rpDesign').value = it.design || '';
   $('#rpRoom').value = it.room || '';
   $('#rpCond').value = it.cond || '';
+  const sh = Number(it.shift || 0);
+  $('#rpShift').value = String(sh);
+  $('#rpShift').classList.toggle('shifted', Math.abs(sh) > 1e-9);
   const fname = rp.kind === '噪声级' ? (it.file || it.inner || '') : (it.inner || '');
   const [f13, f11] = [fname, ''];
   $('#rpInner').value = `${f13}|${f11}`;
@@ -2204,7 +2213,10 @@ async function loadReportDetail(i) {
   try {
     const d = await api('/api/report/detail?i=' + realIdx);
     rp.detail = d;
-    $('#rpRating').textContent = d.value || (d.dataOk ? '—' : '缺数据');
+    const sh = Number(d.shift) || 0;
+    const shTag = (d.kind === '隔声' && Math.abs(sh) > 1e-9)
+      ? ` <span class="rp-shifttag">平移 ${sh > 0 ? '+' : ''}${sh.toFixed(1)} dB</span>` : '';
+    $('#rpRating').innerHTML = (d.value || (d.dataOk ? '—' : '缺数据')) + shTag;
     const judge = $('#rpJudge');
     judge.textContent = d.passFlag ? `判定：${d.passFlag}` : '';
     judge.style.color = d.passFlag === '满足' ? '#2c6b48'
@@ -2283,6 +2295,7 @@ function drawReportChart(d) {
   (d.kind === '隔声' ? bands : []).forEach(b => {
     if (b.contour != null) vals.push(b.contour);
   });
+  (d.rawBands || []).forEach(v => { if (v != null) vals.push(v); });
   let lo = Math.floor(Math.min(...vals) / 5) * 5 - 5;
   let hi = Math.ceil(Math.max(...vals) / 5) * 5 + 5;
   if (hi - lo < 20) { hi = lo + 20; }
@@ -2336,6 +2349,23 @@ function drawReportChart(d) {
     g.setLineDash([]);
   }
 
+  // 平移前的原始曲线（仅在有平移时显示，灰色虚线）
+  const raw = d.rawBands || [];
+  if (d.kind === '隔声' && Math.abs(Number(d.shift) || 0) > 1e-9 && raw.length) {
+    g.strokeStyle = '#b0bcc8';
+    g.lineWidth = 1.4;
+    g.setLineDash([3, 3]);
+    g.beginPath();
+    let st = false;
+    raw.forEach((v, i) => {
+      if (v == null || i >= bands.length) return;
+      const x = X(i), y = Y(v);
+      if (!st) { g.moveTo(x, y); st = true; } else g.lineTo(x, y);
+    });
+    g.stroke();
+    g.setLineDash([]);
+  }
+
   // 实测曲线
   g.strokeStyle = '#2b7fc4';
   g.lineWidth = 2;
@@ -2353,6 +2383,15 @@ function drawReportChart(d) {
     g.arc(X(i), Y(b.value), 2.2, 0, Math.PI * 2);
     g.fill();
   });
+
+  // 左上角平移标注
+  const sh = Number(d.shift) || 0;
+  if (d.kind === '隔声' && Math.abs(sh) > 1e-9) {
+    g.fillStyle = '#c96a3a';
+    g.font = 'bold 11px "Microsoft YaHei"';
+    g.textAlign = 'left';
+    g.fillText(`已平移 ${sh > 0 ? '+' : ''}${sh.toFixed(1)} dB`, pad.l + 4, pad.t + 12);
+  }
 
   // 右下角评价值
   if (d.value) {
@@ -2390,6 +2429,8 @@ function applyFormToItem() {
   it.design = $('#rpDesign').value.trim();
   it.room = ($('#rpRoom').value || '').trim();
   it.cond = ($('#rpCond').value || '').trim();
+  const sh = parseFloat($('#rpShift').value);
+  it.shift = Number.isFinite(sh) ? sh : 0;
 
   if (rp.kind === '噪声级') {
     // 噪声级只有单文件
@@ -2416,6 +2457,35 @@ async function refreshReport() {
   if (rp.cur >= 0 && rp.cur < rp.items.length) loadReportDetail(rp.cur);
   else if (rp.items.length) selectReportRow(0);
 }
+
+/* 平移：输入框直接改，↑↓ 按钮每次 1 dB，↺ 归零 */
+async function applyShift(delta) {
+  const inp = $('#rpShift');
+  let v = parseFloat(inp.value);
+  v = Number.isFinite(v) ? v : 0;
+  v = Math.round((v + delta) * 10) / 10;
+  inp.value = String(v);
+  inp.classList.toggle('shifted', Math.abs(v) > 1e-9);
+  applyFormToItem();
+  await saveReportPlan(true);
+  await refreshReport();
+}
+$('#rpShiftUp').addEventListener('click', () => applyShift(1));
+$('#rpShiftDown').addEventListener('click', () => applyShift(-1));
+$('#rpShiftReset').addEventListener('click', async () => {
+  $('#rpShift').value = '0';
+  $('#rpShift').classList.remove('shifted');
+  applyFormToItem();
+  await saveReportPlan(true);
+  await refreshReport();
+});
+$('#rpShift').addEventListener('change', async () => {
+  const v = parseFloat($('#rpShift').value) || 0;
+  $('#rpShift').classList.toggle('shifted', Math.abs(v) > 1e-9);
+  applyFormToItem();
+  await saveReportPlan(true);
+  await refreshReport();
+});
 
 ['#rpName', '#rpTableNo', '#rpDesign', '#rpRoom', '#rpCond'].forEach(sel => {
   $(sel).addEventListener('change', async () => {
