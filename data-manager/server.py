@@ -1546,6 +1546,9 @@ class Handler(BaseHTTPRequestHandler):
                 table=(old_it.table if old_it else ""),
                 inner=fa, outer=fb,
                 design=(old_it.design if old_it else ""),
+                # 平移量是用户手动修正的干扰补偿，必须在对账重建时保留，
+                # 否则切一次模块就被清零，NIC 和频带表一起弹回原值
+                shift=(old_it.shift if old_it else 0.0),
                 order=0))
 
         for i, it in enumerate(kept, 1):
