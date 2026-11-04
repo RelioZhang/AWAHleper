@@ -16,10 +16,10 @@ import os
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox,
-                               QFileDialog, QFormLayout, QHBoxLayout,
+                               QFileDialog, QFormLayout, QFrame, QHBoxLayout,
                                QHeaderView, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 import report as R
 import report_chart as RC
@@ -184,14 +184,22 @@ class ReportPage(QWidget):
         self.nr_table.setWordWrap(False)
         self.nr_table.horizontalHeader().setHighlightSections(False)
         self.nr_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.nr_table.verticalHeader().setDefaultSectionSize(19)
-        self.nr_table.setFixedHeight(196)
+        self.nr_table.verticalHeader().setDefaultSectionSize(21)
+        self.nr_table.setMinimumHeight(150)
         self.nr_table.setStyleSheet(
             f"QTableWidget{{background:#fff;border:1px solid {LINE};"
             f"gridline-color:#eef3f8;font-size:11.5px;}}")
-        pl.addWidget(self.nr_table)
+        pl.addWidget(self.nr_table, 1)
 
-        rl.addWidget(panel)
+        # 面板整体可滚动：窗口压矮时明细表不会被挤出可视区
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea{background:transparent;border:0;}")
+        scroll.setWidget(panel)
+        rl.addWidget(scroll, 0)
+
         self.preview = NrPreview()
         rl.addWidget(self.preview, 1)
         body.addWidget(right, 2)
@@ -308,6 +316,7 @@ class ReportPage(QWidget):
                 r.value or ("—" if r.ok else "缺数据"),
                 "—" if r.pass_ is None else ("满足" if r.pass_ else "不满足"),
             ]
+            tip = self._row_tooltip(it, r)
             for j, v in enumerate(cells):
                 cell = QTableWidgetItem(str(v))
                 cell.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
@@ -319,11 +328,30 @@ class ReportPage(QWidget):
                     cell.setForeground(QBrush(QColor(GOOD)))
                 if j == 5 and not r.ok:
                     cell.setForeground(QBrush(QColor(WARN)))
+                cell.setToolTip(tip)          # 悬停即可看到逐个频带的值
                 self.table.setItem(i, j, cell)
 
         widths = (38, 190, 70, 150, 150, 84, 62)
         for j, w in enumerate(widths):
             self.table.setColumnWidth(j, w)
+
+    @staticmethod
+    def _row_tooltip(it, r) -> str:
+        """鼠标悬停在清单任意一格，就能看到这个测点的逐个频带值。"""
+        if not r.ok:
+            return r.error or "—"
+        bands = R.BANDS_THIRD if it.kind == R.KIND_INSUL else R.BANDS_OCT
+        unit = "声压级差 NR" if it.kind == R.KIND_INSUL else "倍频带声级"
+        parts = [f"{R.band_text(hz):>6} {R.half_up(v):>4}"
+                 for hz, v in zip(bands, r.bands)]
+        lines = [f"{unit}（dB）"]
+        for k in range(0, len(parts), 4):
+            lines.append("  ".join(parts[k:k + 4]))
+        tail = f"评级 {r.value}"
+        if it.design:
+            tail += f"　设计 {it.design}"
+        lines.append(tail)
+        return "\n".join(lines)
 
     def _update_hint(self):
         total = len(self.items)

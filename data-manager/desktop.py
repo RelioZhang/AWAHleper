@@ -50,6 +50,9 @@ except ImportError:                                    # pragma: no cover
 
 import server as core
 
+# 标题栏带版本号：一眼能看出手上跑的是不是最新的包
+APP_VERSION = "2.1.0"
+
 
 # ============================================================ 调色板 ===
 class C:
@@ -722,7 +725,7 @@ class MainWindow(QMainWindow):
         self.selected_file = ""
         self.detail_cache: dict[str, dict] = {}
 
-        self.setWindowTitle("AWA 数据管理")
+        self.setWindowTitle(f"AWA 数据管理  v{APP_VERSION}")
         self.setWindowIcon(self._make_icon())
         self.resize(1440, 880)
 
