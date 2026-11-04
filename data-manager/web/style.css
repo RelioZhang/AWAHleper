@@ -1134,3 +1134,112 @@ body.view-org .batch-drawer:not([hidden]) ~ .chartwrap{opacity:.35;}
 #tbl .tagsel:hover{border-color:#9dc3e3;}
 #tbl td.tagcell.t-noise{background:#fff8e6;color:#8a5a00;font-weight:600;text-align:center;}
 #tbl td.tagcell.t-insul{background:#eef7f1;color:#2c6b48;font-weight:600;text-align:center;}
+
+/* ================= 报告生成 ================= */
+body.view-report #viewRaw{display:none !important;}
+.rp-body{display:flex;gap:0;overflow:hidden;}
+
+.rp-left{
+  flex:0 0 548px;
+  display:flex;flex-direction:column;
+  border-right:1px solid var(--line);
+  background:#fff;overflow:hidden;
+}
+.rp-left-head{
+  flex:0 0 32px;display:flex;align-items:center;gap:8px;
+  padding:0 12px;font-weight:700;color:#2c4b66;font-size:12.5px;
+  background:linear-gradient(180deg,#f9fcff,#eef5fb);
+  border-bottom:1px solid var(--line);
+}
+.rp-count{margin-left:auto;font-weight:400;color:var(--text-3);font-size:11.5px;}
+.rp-actions{
+  flex:0 0 38px;display:flex;align-items:center;gap:5px;padding:0 10px;
+  border-bottom:1px solid var(--line-soft);background:#fbfdff;
+}
+.rp-tablewrap{flex:1 1 auto;overflow:auto;}
+#rpTbl{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;}
+#rpTbl thead th{
+  position:sticky;top:0;z-index:2;
+  height:26px;padding:0 6px;text-align:left;
+  background:#eef4fa;color:#3d4f61;font-weight:700;font-size:11.5px;
+  border-bottom:1px solid #cfdbe6;border-right:1px solid #dde6ef;
+}
+#rpTbl tbody td{
+  height:25px;padding:0 6px;
+  border-bottom:1px solid #f0f4f8;border-right:1px solid #f2f6fa;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#rpTbl tbody tr{cursor:pointer;}
+#rpTbl tbody tr:hover td{background:#f5faff;}
+#rpTbl tbody tr.sel td{background:#e3f0fb;}
+#rpTbl tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
+#rpTbl td.c{text-align:center;}
+.rp-pass{color:#2c6b48;font-weight:700;}
+.rp-fail{color:#c0392b;font-weight:700;}
+.rp-empty{
+  padding:28px 16px;text-align:center;color:var(--text-3);font-size:12px;
+}
+
+.rp-right{flex:1 1 auto;display:flex;flex-direction:column;overflow:hidden;background:#fff;}
+.rp-head{
+  flex:0 0 40px;display:flex;align-items:center;gap:9px;padding:0 12px;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,#fdfefe,#f2f8fd);
+}
+.rp-head b{font-size:12.5px;color:#2c4b66;}
+.rp-hint{font-size:11.5px;color:var(--text-3);}
+.rp-proj{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-3);}
+.rp-proj input{
+  width:190px;height:25px;padding:0 8px;font-size:12px;
+  border:1px solid #cfdce9;border-radius:3px;outline:none;background:#fdfefe;
+}
+
+.rp-form{
+  flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px 12px;
+  padding:9px 12px;border-bottom:1px solid var(--line-soft);background:#fbfdff;
+}
+.rp-field{display:flex;align-items:center;gap:5px;flex:1 1 210px;min-width:180px;}
+.rp-field label{font-size:11.5px;color:var(--text-3);white-space:nowrap;}
+.rp-field input,.rp-field select{
+  flex:1;min-width:0;height:26px;padding:0 7px;
+  border:1px solid #cfdce9;border-radius:3px;font-size:12px;
+  outline:none;background:#fdfefe;color:var(--text);
+}
+.rp-field input:focus,.rp-field select:focus{
+  border-color:var(--blue);box-shadow:0 0 0 2px rgba(43,127,196,.12);
+}
+
+.rp-preview{flex:1 1 auto;display:flex;gap:0;overflow:hidden;}
+.rp-bands{
+  flex:0 0 268px;display:flex;flex-direction:column;
+  border-right:1px solid var(--line-soft);overflow:hidden;
+}
+.rp-bands-head{
+  flex:0 0 30px;display:flex;align-items:center;gap:8px;padding:0 10px;
+  background:#f7fbff;border-bottom:1px solid var(--line-soft);
+  font-size:12.5px;font-weight:700;color:var(--blue-deep, #1b5f98);
+}
+.rp-judge{font-size:11.5px;font-weight:400;}
+.rp-bands-body{flex:1 1 auto;overflow:auto;}
+#rpBandTbl{width:100%;border-collapse:collapse;font-size:11.5px;}
+#rpBandTbl thead th{
+  position:sticky;top:0;
+  height:22px;padding:0 6px;text-align:center;font-weight:600;
+  background:#eef4fa;color:#5b6b7b;font-size:11px;
+  border-bottom:1px solid #dbe5ef;
+}
+#rpBandTbl td{
+  height:19px;padding:0 6px;text-align:center;
+  border-bottom:1px solid #f4f8fb;
+}
+#rpBandTbl tr.deficit td{background:#fdf1ec;color:#a5522f;}
+#rpBandTbl td.lbl{color:#5b6b7b;}
+
+.rp-chart{flex:1 1 auto;display:flex;flex-direction:column;padding:6px 10px 8px;overflow:hidden;}
+.rp-chart-title{flex:0 0 22px;font-size:11.5px;color:var(--text-3);}
+#rpCanvas{flex:1 1 auto;width:100%;min-height:180px;}
+.rp-legend{
+  flex:0 0 20px;display:flex;align-items:center;gap:14px;
+  font-size:11px;color:var(--text-3);
+}
+.rp-legend i{display:inline-block;width:12px;height:2px;margin-right:4px;vertical-align:middle;}
