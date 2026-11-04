@@ -2292,14 +2292,14 @@ function drawReportChart(d) {
   }
 
   // ---- 版面（与原图比例一致：上留白窄、下留图例） ----
-  // 与报告图一致：主图（0~60dB）在上，柱状区在 0 线下方（0~8dB 反向）
-  const pad = { l: 210, r: 100, t: 56, b: 300 };
-  const iw = W - pad.l - pad.r;
-  const plotH = H - pad.t - pad.b;          // 主图高度（含柱状区）
-  const barZone = 92;                        // 0 线下方给柱状的高度
-  const ih = plotH - barZone;                // 0~vmax 的高度
-  const yBase = pad.t + ih;                  // 0 dB 基线
-  const yTop = pad.t;
+  // 版面按报告原图实测：图框 x=209~1300、y=55~740（0线 y=648），图例 y=917
+  const pad = { l: 209, r: 100, t: 55, b: 0 };
+  const iw = W - pad.l - pad.r;              // 1091
+  const barZone = 92;                        // 0 线到图框底（648→740）
+  const yBase = 648;                         // 0 dB 基线（实测）
+  const yTop = pad.t;                        // 55
+  const ih = yBase - yTop;                   // 0~vmax 的高度 = 593
+  const plotBottom = yBase + barZone;        // 740 图框底
 
   const vals = [];
   d.bands.forEach(b => {
@@ -2329,7 +2329,7 @@ function drawReportChart(d) {
   g.lineWidth = 1.4;
   NIC_BANDS.forEach(hz => {
     const x = Math.round(lx(hz)) + 0.5;
-    g.beginPath(); g.moveTo(x, yBase + barZone); g.lineTo(x, yTop); g.stroke();
+    g.beginPath(); g.moveTo(x, plotBottom); g.lineTo(x, yTop); g.stroke();
   });
   // 横线（每 10dB 主网格）
   for (let v = 0; v <= vmax; v += 10) {
@@ -2355,7 +2355,7 @@ function drawReportChart(d) {
   // 外框
   g.strokeStyle = '#333';
   g.lineWidth = 2.2;
-  g.strokeRect(pad.l, pad.t, iw, plotH);
+  g.strokeRect(pad.l, pad.t, iw, plotBottom - pad.t);
 
   // ---- 刻度标签 ----
   g.fillStyle = '#111';
@@ -2373,12 +2373,12 @@ function drawReportChart(d) {
   labels.forEach(hz => {
     let txt = hz >= 1000 ? (hz === 5000 ? '5k' : String(hz)) : String(hz);
     if (hz === 3150) txt = '3150';
-    g.fillText(txt, lx(hz), yBase + barZone + 16);
+    g.fillText(txt, lx(hz), plotBottom + 18);
   });
 
   // 轴标题
   g.font = '32px "Times New Roman", serif';
-  g.fillText('Frequency, Hz', pad.l + iw / 2, yBase + barZone + 66);
+  g.fillText('Frequency, Hz', pad.l + iw / 2, plotBottom + 90);
 
   g.save();
   g.translate(56, pad.t + ih / 2);
@@ -2471,7 +2471,7 @@ function drawReportChart(d) {
   }
 
   // ---- 图例（底部方框） ----
-  const ly = H - 96;
+  const ly = 943;
   g.strokeStyle = '#333';
   g.lineWidth = 2;
   const items = [
@@ -2508,14 +2508,6 @@ function drawReportChart(d) {
     cx += widths[k] + 40;
   });
 
-  // 右下角评价值
-  if (d.value) {
-    g.fillStyle = '#111';
-    g.font = 'bold 34px "Times New Roman", serif';
-    g.textAlign = 'right';
-    g.textBaseline = 'alphabetic';
-    g.fillText(d.value, W - pad.r, yBase + barZone + 42);
-  }
 }
 
 /* 把画布转成 PNG blob（固定尺寸，2 倍清晰度已在画布本身） */
