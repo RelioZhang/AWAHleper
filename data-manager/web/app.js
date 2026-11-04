@@ -1599,6 +1599,34 @@ function clearAll() {
 /* ============================================================ 事件绑定 */
 $('#btnRead').addEventListener('click', () => scan(state.dir || null));
 $('#btnExport').addEventListener('click', exportData);
+
+/* -------- 数据导入：xlsx -> 侧车编辑 -------- */
+$('#btnImport').addEventListener('click', () => $('#importFile').click());
+$('#importFile').addEventListener('change', ev => {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!file) return;
+  const rd = new FileReader();
+  rd.onload = async () => {
+    const b64 = btoa(new Uint8Array(rd.result).reduce(
+      (s, b) => s + String.fromCharCode(b), ''));
+    try {
+      const j = await postJSON('/api/import', { data: b64 });
+      state.cache.clear();
+      state.detail = null;
+      await loadTable(state.cat);
+      if (state.selectedFile) await loadDetail(state.selectedFile);
+      let msg = `导入完成：应用 ${j.applied} 处修改`;
+      if (j.skipped) msg += `，${j.skipped} 处与当前值相同`;
+      if (j.badrows) msg += `，${j.badrows} 行文件不匹配`;
+      if (j.errors && j.errors.length) msg += `；${j.errors[0]}`;
+      toast(msg, j.errors && j.errors.length ? 5000 : 3000);
+    } catch (e) {
+      toast('导入失败：' + e.message, 4000);
+    }
+  };
+  rd.readAsArrayBuffer(file);
+});
 $('#btnOpen').addEventListener('click', () => reveal(state.selectedFile));
 $('#btnClear').addEventListener('click', clearAll);
 
@@ -2469,6 +2497,31 @@ $('#rpPair').addEventListener('click', async () => {
 
 $('#rpSave').addEventListener('click', () => saveReportPlan(false));
 
+/* 自定义排序：在当前模块内交换相邻行/列，保存后按新顺序显示 */
+async function moveReport(delta) {
+  const all = rp._allItems || [];
+  // 当前视图内的行（隔声/噪声级各自的顺序）
+  const viewIdx = [];
+  all.forEach((it, i) => { if ((it.kind || '隔声') === rp.kind) viewIdx.push(i); });
+  const pos = viewIdx.indexOf(all.indexOf(rp.items[rp.cur]));
+  if (pos < 0) return toast('先选中一行/一列', 2000);
+  const to = pos + delta;
+  if (to < 0 || to >= viewIdx.length) return toast('已经到头了', 1600);
+
+  const a = viewIdx[pos], b = viewIdx[to];
+  [all[a], all[b]] = [all[b], all[a]];
+  rp._allItems = all;
+  await postJSON('/api/report/plan', {
+    items: all.map((it, i) => ({ ...it, order: i + 1 })),
+  });
+  rp.cur = rp.items.indexOf(all[a]);
+  await loadReport();
+  if (rp.cur >= 0) selectReportRow(rp.cur);
+}
+
+$('#rpUp').addEventListener('click', () => moveReport(-1));
+$('#rpDown').addEventListener('click', () => moveReport(1));
+
 $('#rpExport').addEventListener('click', async () => {
   const project = $('#rpProject').value.trim() || '报告';
   try {
@@ -2652,7 +2705,9 @@ $('#bdApplyTime').addEventListener('click', () =>
 $('#bdExport').addEventListener('click', () => {
   const files = pickedFiles();
   if (!files.length) return toast('请先勾选要导出的数据行', 2400);
+  // 整理视图导出＝当前视图的列（100Hz~5kHz 或 63Hz~8kHz+W/NR/NC），不是全部原始频带
   const url = '/api/export?cat=' + encodeURIComponent(state.cat) +
+              '&view=organize' +
               '&files=' + encodeURIComponent(files.join(','));
   const a = document.createElement('a');
   a.href = url; a.download = '';
