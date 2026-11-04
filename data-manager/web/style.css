@@ -1243,3 +1243,77 @@ body.view-report #viewRaw{display:none !important;}
   font-size:11px;color:var(--text-3);
 }
 .rp-legend i{display:inline-block;width:12px;height:2px;margin-right:4px;vertical-align:middle;}
+
+/* ================= 报告：噪声级 / 隔声 两种模式 ================= */
+/* 噪声级只有单文件，隐藏外侧列与对应表头 */
+body.rp-noise #rpTbl th:nth-child(5),
+body.rp-noise #rpTbl td:nth-child(5){display:none;}
+/* 噪声级频带表只占一栏，给曲线更多空间 */
+body.rp-noise .rp-bands{flex:0 0 190px;}
+/* 隐藏的字段不占位 */
+.rp-field[hidden]{display:none !important;}
+
+/* ================= 噪声级交叉表 ================= */
+#rpNoiseTbl{
+  border-collapse:collapse;
+  font-size:12px;
+  background:#fff;
+}
+#rpNoiseTbl th,#rpNoiseTbl td{
+  border:1px solid #c9d8e6;
+  text-align:center;
+  padding:0 5px;
+}
+#rpNoiseTbl thead th{
+  position:sticky;
+  background:#eaf3fb;
+  color:#25415a;
+  font-weight:700;
+  font-size:11.5px;
+  height:24px;
+  z-index:2;
+}
+#rpNoiseTbl thead tr:nth-child(1) th{top:0;}
+#rpNoiseTbl thead tr:nth-child(2) th{top:24px;}
+#rpNoiseTbl th.corner{
+  left:0;z-index:4;
+  min-width:62px;
+  line-height:1.25;
+  padding:3px 4px;
+  background:#e3eef8;
+  vertical-align:middle;
+}
+#rpNoiseTbl th.room{background:#dceaf7;color:#1b4a6f;}
+#rpNoiseTbl th.cond{
+  background:#eaf3fb;font-weight:600;font-size:11px;
+  min-width:56px;white-space:nowrap;
+}
+#rpNoiseTbl td.hz{
+  position:sticky;left:0;z-index:1;
+  background:#f4f9fd;
+  font-weight:700;color:#3d5b76;
+  min-width:62px;height:22px;
+  font-size:11.5px;
+}
+#rpNoiseTbl td.num{
+  font-family:Consolas,"Courier New",monospace;
+  height:22px;
+  min-width:56px;
+}
+#rpNoiseTbl td.num:hover{background:#eaf5ff;cursor:pointer;}
+#rpNoiseTbl tr.ncrow td{
+  background:#f8fbfe;
+  font-weight:700;
+  height:24px;
+}
+#rpNoiseTbl tr.ncrow td.hz{background:#eef5fb;font-weight:600;font-size:10.5px;line-height:1.2;}
+#rpNoiseTbl td.nc{color:#1b5f98;font-size:12.5px;}
+/* 噪声级模式：右侧预览不需要曲线 */
+body.rp-noise .rp-preview{display:none;}
+body.rp-noise .rp-left{flex:1 1 auto;}
+/* 噪声级：右侧只剩表单，左侧占满 */
+body.rp-noise .rp-right{flex:0 0 auto;}
+body.rp-noise .rp-body{flex-direction:column;}
+body.rp-noise .rp-left{flex:1 1 auto;border-right:0;}
+body.rp-noise .rp-right{border-top:1px solid var(--line);}
+body.rp-noise .rp-tablewrap{flex:1 1 auto;overflow:auto;padding:8px 10px;}
