@@ -1670,7 +1670,8 @@ $('#tbl').addEventListener('dblclick', e => {
 $$('.mod').forEach(btn => {
   btn.addEventListener('click', () => {
     const mod = btn.dataset.mod;
-    if (mod === 'data' || mod === 'organize' || mod === 'report') {
+    if (mod === 'data' || mod === 'organize'
+        || mod === 'report_noise' || mod === 'report_insul') {
       switchModule(mod);
       return;
     }
@@ -1801,17 +1802,22 @@ function switchModule(mod) {
   $$('.mod').forEach(b => b.classList.toggle('active', b.dataset.mod === mod));
 
   // 报告生成是独立视图
-  if (mod === 'report') {
+  if (mod === 'report_noise' || mod === 'report_insul') {
+    const isNoise = mod === 'report_noise';
+    rp.kind = isNoise ? '噪声级' : '隔声';
     document.body.classList.add('view-report');
     document.body.classList.remove('view-org');
     $('#viewRaw').hidden = true;
     $('#viewReport').hidden = false;
-    $('#tbBadge').textContent = '报告生成';
+    $('#tbBadge').textContent = isNoise ? '报告·噪声级' : '报告·隔声';
     const bar0 = $('#modeBar');
     bar0.classList.remove('editable');
-    $('#mbText').textContent = '报告生成 · 左侧是测点清单，右侧填内侧/外侧文件与设计值，曲线即时预览';
+    $('#mbText').textContent = isNoise
+      ? '报告·噪声级 · 只列数据管理中标为「噪声级」的 OCT 测量，输出 NC 评价值'
+      : '报告·隔声 · 只列数据管理中标为「隔声」的 1/3OCT 测量，输出 NIC 评价值';
     $('#mbIcon').innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12"><rect x="2.5" y="1.5" width="8" height="13" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 5h4M4.5 8h4M4.5 11h2" stroke="currentColor" stroke-width="1.2"/><path d="M9 13l2-2.5 1.6 1.6 2-2.6" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>';
     $('#mbActions').innerHTML = '';
+    applyReportKind();
     loadReport();
     return;
   }
@@ -1859,15 +1865,21 @@ const rp = {
   rows: [],
   cur: -1,
   detail: null,
+  kind: '隔声',        // 当前模块：隔声 / 噪声级
 };
 
 async function loadReport() {
   try {
     const j = await api('/api/report/plan');
-    rp.items = j.items || [];
+    const all = j.items || [];
+    // 只保留本模块对应类型的行（清单是同一份，按类型分流展示）
+    rp.items = all.filter(it => (it.kind || '隔声') === rp.kind);
+    rp._allItems = all;
     rp.groups = j.groups || [];
     const c = await api('/api/report/compute');
-    rp.rows = c.rows || [];
+    const rows = c.rows || [];
+    // 计算结果与 all 同序，按同样规则过滤
+    rp.rows = rows.filter((r, i) => ((all[i] || {}).kind || '隔声') === rp.kind);
     rp.cur = -1;
     fillGroupSelects();
     renderReportTable();
@@ -1875,6 +1887,44 @@ async function loadReport() {
     else clearReportDetail();
   } catch (e) {
     toast('读取报告清单失败：' + e.message, 3200);
+  }
+}
+
+/* 按模块类型调整界面：噪声级只看单文件，隔声看内外两侧 */
+function applyReportKind() {
+  const isNoise = rp.kind === '噪声级';
+
+  // 按 data-kind 标记的字段只在该类型下显示
+  $$('.rp-field[data-kind]').forEach(el => {
+    el.hidden = el.dataset.kind !== rp.kind;
+  });
+  // 隔声才需要内/外侧
+  const innerField = $('#rpInner').closest('.rp-field');
+  const outerField = $('#rpOuter').closest('.rp-field');
+  if (innerField) innerField.hidden = isNoise;
+  if (outerField) outerField.hidden = isNoise;
+
+  // 噪声级只需选文件，复用「内侧」下拉的选项，但标签改成「文件」
+  const innerLabel = innerField ? innerField.querySelector('label') : null;
+  if (innerLabel) innerLabel.textContent = isNoise ? '文件' : '内侧';
+
+  // 两张表切换
+  $('#rpNoiseTbl').hidden = !isNoise;
+  $('#rpTbl').hidden = isNoise;
+
+  const kd = $('#rpKind');
+  kd.value = rp.kind;
+  kd.disabled = true;
+
+  document.body.classList.toggle('rp-noise', isNoise);
+  document.body.classList.toggle('rp-insul', !isNoise);
+  $('#rpTitleLabel').textContent = isNoise ? '报告生成 · 噪声级' : '报告生成 · 隔声';
+  $('#rpListHead').textContent = isNoise ? '噪声级实测（倍频带）' : '隔声测点';
+  const hint = $('#rpHint');
+  if (hint) {
+    hint.textContent = isNoise
+      ? '列 = 房间 × 工况，行 = 8 个倍频带，末两行为 NC 实测 / 设计'
+      : '一测点一行，填内侧/外侧文件与设计值，右下预览 NIC 曲线';
   }
 }
 
@@ -1895,6 +1945,7 @@ function parseSel(val) {
 }
 
 function renderReportTable() {
+  if (rp.kind === '噪声级') { renderNoiseTable(); return; }
   const tb = $('#rpTbl tbody');
   tb.innerHTML = '';
   const frag = document.createDocumentFragment();
@@ -1903,12 +1954,13 @@ function renderReportTable() {
     const tr = document.createElement('tr');
     if (i === rp.cur) tr.classList.add('sel');
 
+    const isNoise = rp.kind === '噪声级';
     const cells = [
       [String(i + 1), 'c'],
       [it.name || '—', ''],
       [it.kind, 'c'],
-      [it.inner || '—', ''],
-      [it.outer || '—', ''],
+      [isNoise ? (it.file || '—') : (it.inner || '—'), ''],
+      [isNoise ? '' : (it.outer || '—'), ''],
       [row.value || (row.ok ? '—' : '缺数据'), 'c'],
     ];
     cells.forEach(([v, cls]) => {
@@ -1933,10 +1985,113 @@ function renderReportTable() {
   });
   tb.appendChild(frag);
 
-  $('#rpCount').textContent = `${rp.items.length} 条 · ${rp.rows.filter(r => r.ok).length} 条有效`;
+  $('#rpCount').textContent =
+    `${rp.items.length} 条 · ${rp.rows.filter(r => r.ok).length} 条有效`;
   const empty = $('#rpEmpty');
   empty.hidden = rp.items.length > 0;
   empty.textContent = '清单是空的，点【添加测点】或【按时序配对】开始';
+}
+
+/* 噪声级交叉表：行=8 倍频带，列=房间×工况，末两行 NC 实测/设计 */
+const NOISE_BANDS = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
+
+function fmtHz(hz) {
+  return hz >= 1000 ? `${hz / 1000}k` : String(hz);
+}
+
+function renderNoiseTable() {
+  const thead = $('#rpNoiseTbl thead');
+  const tbody = $('#rpNoiseTbl tbody');
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+
+  const cols = rp.items;
+  if (!cols.length) {
+    $('#rpEmpty').hidden = false;
+    $('#rpEmpty').textContent = '还没有噪声级测点。先在【数据整理】把 OCT 数据标为「噪声级」，再点【按时序配对】';
+    return;
+  }
+  $('#rpEmpty').hidden = true;
+
+  // 第一行：房间（相邻同房间合并）
+  const tr1 = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.rowSpan = 2;
+  corner.className = 'corner';
+  corner.innerHTML = '倍频带<br>中心频率<br>(Hz)';
+  tr1.appendChild(corner);
+
+  let i = 0;
+  while (i < cols.length) {
+    const room = (cols[i].room || cols[i].name || '未命名').trim();
+    let j = i;
+    while (j + 1 < cols.length &&
+           (cols[j + 1].room || cols[j + 1].name || '未命名').trim() === room) j++;
+    const th = document.createElement('th');
+    th.textContent = room;
+    th.colSpan = j - i + 1;
+    th.className = 'room';
+    tr1.appendChild(th);
+    i = j + 1;
+  }
+  thead.appendChild(tr1);
+
+  // 第二行：工况
+  const tr2 = document.createElement('tr');
+  cols.forEach((it, k) => {
+    const th = document.createElement('th');
+    th.textContent = it.cond || `测点${k + 1}`;
+    th.className = 'cond';
+    tr2.appendChild(th);
+  });
+  thead.appendChild(tr2);
+
+  // 8 个倍频带 × 各列
+  NOISE_BANDS.forEach((hz, bi) => {
+    const tr = document.createElement('tr');
+    const th = document.createElement('td');
+    th.className = 'hz';
+    th.textContent = fmtHz(hz);
+    tr.appendChild(th);
+    cols.forEach((it, k) => {
+      const row = rp.rows[k] || {};
+      const bands = row.bands || [];
+      const td = document.createElement('td');
+      const v = bands[bi];
+      td.textContent = (v == null) ? '—' : Number(v).toFixed(1);
+      td.className = 'num';
+      td.dataset.col = k;
+      td.dataset.band = bi;
+      td.title = `${it.room || ''} ${it.cond || ''}　${fmtHz(hz)}Hz`;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  // NC 实测 / NC 设计
+  [['NC\n（实测值）', r => r.value || '—'],
+   ['NC\n（设计值）', r => (rp.items[0] && null) || r.design || '—']]
+    .forEach(([label, getter], ri) => {
+      const tr = document.createElement('tr');
+      tr.className = 'ncrow';
+      const th = document.createElement('td');
+      th.className = 'hz';
+      th.innerHTML = label.replace('\n', '<br>');
+      tr.appendChild(th);
+      cols.forEach((it, k) => {
+        const row = rp.rows[k] || {};
+        const td = document.createElement('td');
+        if (ri === 0) {
+          td.textContent = row.value || '—';
+          td.className = 'num nc';
+        } else {
+          td.textContent = it.design || '/';
+          td.className = 'num';
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
 }
 
 function selectReportRow(i) {
@@ -1948,7 +2103,10 @@ function selectReportRow(i) {
   $('#rpKind').value = it.kind || '隔声';
   $('#rpTableNo').value = it.table || '';
   $('#rpDesign').value = it.design || '';
-  const [f13, f11] = [it.inner || '', it.outer || ''];
+  $('#rpRoom').value = it.room || '';
+  $('#rpCond').value = it.cond || '';
+  const fname = rp.kind === '噪声级' ? (it.file || it.inner || '') : (it.inner || '');
+  const [f13, f11] = [fname, ''];
   $('#rpInner').value = `${f13}|${f11}`;
   $('#rpOuter').value = `${it.outer || ''}|${it.outer ? '' : ''}`;
 
@@ -1968,7 +2126,7 @@ function selectReportRow(i) {
   if (hitIn) $('#rpInner').value = hitIn.value;
 
   renderReportTable();
-  loadReportDetail(i);
+  if (rp.kind === '隔声') loadReportDetail(i);
 }
 
 function clearReportDetail() {
@@ -1985,8 +2143,13 @@ function clearReportDetail() {
 }
 
 async function loadReportDetail(i) {
+  // 页面上是过滤后的行；服务端清单是完整的，需换算原始下标
+  const target = rp.items[i];
+  const all = rp._allItems || rp.items;
+  const realIdx = target ? all.indexOf(target) : -1;
+  if (realIdx < 0) return;
   try {
-    const d = await api('/api/report/detail?i=' + i);
+    const d = await api('/api/report/detail?i=' + realIdx);
     rp.detail = d;
     $('#rpRating').textContent = d.value || (d.dataOk ? '—' : '缺数据');
     const judge = $('#rpJudge');
@@ -2149,7 +2312,9 @@ function drawReportChart(d) {
 
 /* ---------- 清单编辑 ---------- */
 function collectItems() {
-  return rp.items.map((it, i) => ({ ...it, order: i + 1 }));
+  // 保存要写完整清单（两种类型都在里面），否则会丢掉另一个模块的行
+  const all = rp._allItems || rp.items;
+  return all.map((it, i) => ({ ...it, order: i + 1 }));
 }
 
 async function saveReportPlan(quiet) {
@@ -2167,13 +2332,24 @@ function applyFormToItem() {
   const it = rp.items[rp.cur];
   if (!it) return;
   it.name = $('#rpName').value.trim();
-  it.kind = $('#rpKind').value;
+  it.kind = rp.kind;
   it.table = $('#rpTableNo').value.trim();
   it.design = $('#rpDesign').value.trim();
-  const [inA, inB] = parseSel($('#rpInner').value);
-  it.inner = inA || inB;
-  const [outA, outB] = parseSel($('#rpOuter').value);
-  it.outer = outA || outB;
+  it.room = ($('#rpRoom').value || '').trim();
+  it.cond = ($('#rpCond').value || '').trim();
+
+  if (rp.kind === '噪声级') {
+    // 噪声级只有单文件
+    const [f13, f11] = parseSel($('#rpInner').value);
+    it.file = f11 || f13;          // 优先 OCT 文件
+    it.inner = it.file;
+    it.outer = '';
+  } else {
+    const [inA, inB] = parseSel($('#rpInner').value);
+    it.inner = inA || inB;
+    const [outA, outB] = parseSel($('#rpOuter').value);
+    it.outer = outA || outB;
+  }
 }
 
 async function refreshReport() {
@@ -2183,7 +2359,7 @@ async function refreshReport() {
   if (rp.cur >= 0) loadReportDetail(rp.cur);
 }
 
-['#rpName', '#rpTableNo', '#rpDesign'].forEach(sel => {
+['#rpName', '#rpTableNo', '#rpDesign', '#rpRoom', '#rpCond'].forEach(sel => {
   $(sel).addEventListener('change', async () => {
     applyFormToItem();
     await saveReportPlan(true);
@@ -2204,14 +2380,20 @@ $('#rpKind').addEventListener('change', async () => {
 });
 
 $('#rpAdd').addEventListener('click', async () => {
-  rp.items.push({
-    name: '', kind: '隔声', table: '', order: rp.items.length + 1,
-    file: '', inner: '', outer: '', design: '', room: '',
+  const all = rp._allItems || [];
+  all.push({
+    name: '', kind: rp.kind, table: '', order: all.length + 1,
+    file: '', inner: '', outer: '', design: '',
+    room: ($('#rpRoom').value || '').trim(),
+    cond: '',
   });
-  await saveReportPlan(true);
+  rp._allItems = all;
+  await postJSON('/api/report/plan', {
+    items: all.map((it, i) => ({ ...it, order: i + 1 })),
+  });
+  await loadReport();
   rp.cur = rp.items.length - 1;
-  renderReportTable();
-  selectReportRow(rp.cur);
+  if (rp.cur >= 0) selectReportRow(rp.cur);
 });
 
 $('#rpDel').addEventListener('click', async () => {
