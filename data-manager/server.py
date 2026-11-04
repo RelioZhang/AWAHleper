@@ -1367,6 +1367,8 @@ class Handler(BaseHTTPRequestHandler):
             error=r.error,
             passFlag=("" if r.pass_ is None else ("满足" if r.pass_ else "不满足")),
             designNum=r.design_num,
+            # 交叉表要按频带取值：噪声级 8 个倍频程、隔声 18 个 1/3 倍频程
+            bands=[None if v is None else round(v, 1) for v in (r.bands or [])],
         )
         return d
 
@@ -1423,6 +1425,19 @@ class Handler(BaseHTTPRequestHandler):
                 if report_core is None:
                     return self._json(dict(ok=False, error="缺少 report.py"), 500)
                 self.store.ensure()
+                # rebuild=1：无视现有清单，强制按标记与时序重新生成
+                if q.get("rebuild") == "1":
+                    items = report_core.suggest_plan(self.store)
+                    report_core.save_plan(self.store.dir, items)
+                    return self._json(dict(
+                        ok=True,
+                        items=[it.to_dict() for it in items],
+                        groups=[dict(gid=g["gid"],
+                                     label=f'{g["gid"]}　{g.get("point","")}',
+                                     f13=f"1_3_{g['gid']}.AWA",
+                                     f11=f"OCT_{g['gid']}.AWA")
+                                for g in self.store.groups()]))
+
                 items = report_core.load_plan(self.store.dir)
                 if not items and q.get("suggest") != "0":
                     items = report_core.suggest_plan(self.store)
