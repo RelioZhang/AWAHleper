@@ -1799,6 +1799,27 @@ function isEditMode() {
 
 function switchModule(mod) {
   $$('.mod').forEach(b => b.classList.toggle('active', b.dataset.mod === mod));
+
+  // 报告生成是独立视图
+  if (mod === 'report') {
+    document.body.classList.add('view-report');
+    document.body.classList.remove('view-org');
+    $('#viewRaw').hidden = true;
+    $('#viewReport').hidden = false;
+    $('#tbBadge').textContent = '报告生成';
+    const bar0 = $('#modeBar');
+    bar0.classList.remove('editable');
+    $('#mbText').textContent = '报告生成 · 左侧是测点清单，右侧填内侧/外侧文件与设计值，曲线即时预览';
+    $('#mbIcon').innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12"><rect x="2.5" y="1.5" width="8" height="13" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 5h4M4.5 8h4M4.5 11h2" stroke="currentColor" stroke-width="1.2"/><path d="M9 13l2-2.5 1.6 1.6 2-2.6" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>';
+    $('#mbActions').innerHTML = '';
+    loadReport();
+    return;
+  }
+
+  document.body.classList.remove('view-report');
+  $('#viewReport').hidden = true;
+  $('#viewRaw').hidden = false;
+
   const edit = mod === 'organize';
   document.body.classList.toggle('view-org', edit);
 
@@ -1830,6 +1851,420 @@ function switchModule(mod) {
   if (!state.cleared) loadTable(state.cat);
   updateBatchUI();
 }
+
+/* ============================================================ 报告生成 */
+const rp = {
+  items: [],
+  groups: [],
+  rows: [],
+  cur: -1,
+  detail: null,
+};
+
+async function loadReport() {
+  try {
+    const j = await api('/api/report/plan');
+    rp.items = j.items || [];
+    rp.groups = j.groups || [];
+    const c = await api('/api/report/compute');
+    rp.rows = c.rows || [];
+    rp.cur = -1;
+    fillGroupSelects();
+    renderReportTable();
+    if (rp.items.length) selectReportRow(0);
+    else clearReportDetail();
+  } catch (e) {
+    toast('读取报告清单失败：' + e.message, 3200);
+  }
+}
+
+function fillGroupSelects() {
+  const opts = ['<option value="">（未选）</option>'];
+  rp.groups.forEach(g => {
+    opts.push(`<option value="${g.f13}|${g.f11}">${g.label}</option>`);
+  });
+  const html = opts.join('');
+  $('#rpInner').innerHTML = html;
+  $('#rpOuter').innerHTML = html;
+}
+
+function parseSel(val) {
+  if (!val) return ['', ''];
+  const [a, b] = val.split('|');
+  return [a || '', b || ''];
+}
+
+function renderReportTable() {
+  const tb = $('#rpTbl tbody');
+  tb.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  rp.items.forEach((it, i) => {
+    const row = rp.rows[i] || {};
+    const tr = document.createElement('tr');
+    if (i === rp.cur) tr.classList.add('sel');
+
+    const cells = [
+      [String(i + 1), 'c'],
+      [it.name || '—', ''],
+      [it.kind, 'c'],
+      [it.inner || '—', ''],
+      [it.outer || '—', ''],
+      [row.value || (row.ok ? '—' : '缺数据'), 'c'],
+    ];
+    cells.forEach(([v, cls]) => {
+      const td = document.createElement('td');
+      td.textContent = v;
+      if (cls) td.className = cls;
+      td.title = v;
+      tr.appendChild(td);
+    });
+    const tdJ = document.createElement('td');
+    tdJ.className = 'c';
+    if (row.passFlag) {
+      tdJ.textContent = row.passFlag;
+      tdJ.classList.add(row.passFlag === '满足' ? 'rp-pass' : 'rp-fail');
+    } else {
+      tdJ.textContent = '—';
+    }
+    tr.appendChild(tdJ);
+
+    tr.addEventListener('click', () => selectReportRow(i));
+    frag.appendChild(tr);
+  });
+  tb.appendChild(frag);
+
+  $('#rpCount').textContent = `${rp.items.length} 条 · ${rp.rows.filter(r => r.ok).length} 条有效`;
+  const empty = $('#rpEmpty');
+  empty.hidden = rp.items.length > 0;
+  empty.textContent = '清单是空的，点【添加测点】或【按时序配对】开始';
+}
+
+function selectReportRow(i) {
+  rp.cur = i;
+  const it = rp.items[i];
+  if (!it) return;
+
+  $('#rpName').value = it.name || '';
+  $('#rpKind').value = it.kind || '隔声';
+  $('#rpTableNo').value = it.table || '';
+  $('#rpDesign').value = it.design || '';
+  const [f13, f11] = [it.inner || '', it.outer || ''];
+  $('#rpInner').value = `${f13}|${f11}`;
+  $('#rpOuter').value = `${it.outer || ''}|${it.outer ? '' : ''}`;
+
+  // 外侧：按 outer 文件名反查选项
+  const optsOuter = [...$('#rpOuter').options];
+  const hit = optsOuter.find(o => {
+    const [a, b] = parseSel(o.value);
+    return a === it.outer || b === it.outer;
+  });
+  if (hit) $('#rpOuter').value = hit.value;
+
+  const optsInner = [...$('#rpInner').options];
+  const hitIn = optsInner.find(o => {
+    const [a, b] = parseSel(o.value);
+    return a === it.inner || b === it.inner;
+  });
+  if (hitIn) $('#rpInner').value = hitIn.value;
+
+  renderReportTable();
+  loadReportDetail(i);
+}
+
+function clearReportDetail() {
+  rp.detail = null;
+  $('#rpRating').textContent = '—';
+  $('#rpJudge').textContent = '';
+  $('#rpBandTbl tbody').innerHTML = '';
+  $('#rpChartTitle').textContent = '选择左侧测点查看曲线';
+  const cv = $('#rpCanvas');
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.fillStyle = '#f7fafd';
+  g.fillRect(0, 0, cv.width, cv.height);
+}
+
+async function loadReportDetail(i) {
+  try {
+    const d = await api('/api/report/detail?i=' + i);
+    rp.detail = d;
+    $('#rpRating').textContent = d.value || (d.dataOk ? '—' : '缺数据');
+    const judge = $('#rpJudge');
+    judge.textContent = d.passFlag ? `判定：${d.passFlag}` : '';
+    judge.style.color = d.passFlag === '满足' ? '#2c6b48'
+                       : d.passFlag === '不满足' ? '#c0392b' : '';
+    renderBandTable(d);
+    $('#rpChartTitle').textContent =
+      `${d.item.name || ''}　${d.kind === '噪声级' ? 'NC 评价' : '声压级差 NR'}`;
+    drawReportChart(d);
+  } catch (e) {
+    toast('读取明细失败：' + e.message, 3000);
+  }
+}
+
+function renderBandTable(d) {
+  const tb = $('#rpBandTbl tbody');
+  tb.innerHTML = '';
+  const bands = d.bands || [];
+  if (!bands.length) return;
+
+  if (d.kind === '噪声级') {
+    // 单列：8 个倍频程声压级
+    bands.forEach(b => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="lbl">${b.label}</td><td>${b.value ?? '—'}</td>
+                      <td class="lbl"></td><td></td>`;
+      tb.appendChild(tr);
+    });
+    return;
+  }
+
+  // 隔声：两栏各 9 行
+  const half = Math.ceil(bands.length / 2);
+  for (let i = 0; i < half; i++) {
+    const a = bands[i];
+    const b = bands[i + half];
+    const tr = document.createElement('tr');
+    if (a && a.deficit > 0) tr.classList.add('deficit');
+    const cell = (x) => x
+      ? `<td class="lbl">${x.label}</td><td>${x.value ?? '—'}</td>`
+      : '<td class="lbl"></td><td></td>';
+    tr.innerHTML = cell(a) + cell(b);
+    if (b && b.deficit > 0) tr.classList.add('deficit');
+    tb.appendChild(tr);
+  }
+}
+
+/* NIC 曲线：横轴频带（对数），纵轴 dB */
+function drawReportChart(d) {
+  const cv = $('#rpCanvas');
+  const rect = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.max(rect.width, 320);
+  const H = Math.max(rect.height, 170);
+  cv.width = W * dpr;
+  cv.height = H * dpr;
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, W, H);
+
+  const bands = (d.bands || []).filter(b => b.value != null);
+  if (!bands.length) {
+    g.fillStyle = '#9aa8b6';
+    g.font = '12px "Microsoft YaHei"';
+    g.textAlign = 'center';
+    g.fillText('该测点没有可用的频带数据', W / 2, H / 2);
+    return;
+  }
+
+  const pad = { l: 40, r: 12, t: 14, b: 26 };
+  const iw = W - pad.l - pad.r;
+  const ih = H - pad.t - pad.b;
+
+  const vals = bands.map(b => b.value);
+  (d.kind === '隔声' ? bands : []).forEach(b => {
+    if (b.contour != null) vals.push(b.contour);
+  });
+  let lo = Math.floor(Math.min(...vals) / 5) * 5 - 5;
+  let hi = Math.ceil(Math.max(...vals) / 5) * 5 + 5;
+  if (hi - lo < 20) { hi = lo + 20; }
+
+  const n = bands.length;
+  const X = i => pad.l + (n > 1 ? iw * i / (n - 1) : iw / 2);
+  const Y = v => pad.t + ih - (v - lo) / (hi - lo) * ih;
+
+  // 网格
+  g.strokeStyle = '#eef3f8';
+  g.lineWidth = 1;
+  const stepY = Math.max(5, Math.round((hi - lo) / 6 / 5) * 5);
+  for (let v = lo; v <= hi + 1e-6; v += stepY) {
+    g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(W - pad.r, Y(v)); g.stroke();
+    g.fillStyle = '#8b9aa9';
+    g.font = '10px Consolas';
+    g.textAlign = 'right';
+    g.fillText(String(v), pad.l - 5, Y(v) + 3);
+  }
+
+  // 频带标签
+  g.fillStyle = '#8b9aa9';
+  g.font = '10px Consolas';
+  g.textAlign = 'center';
+  bands.forEach((b, i) => {
+    if (n > 12 && i % 2 === 1) return;
+    g.fillText(b.label, X(i), H - pad.b + 13);
+  });
+
+  // 扣分频带阴影
+  if (d.kind === '隔声') {
+    bands.forEach((b, i) => {
+      if (!b.deficit || b.deficit <= 0 || b.contour == null) return;
+      const w = Math.max(iw / Math.max(n - 1, 1) * 0.7, 6);
+      g.fillStyle = 'rgba(240,170,140,.28)';
+      g.fillRect(X(i) - w / 2, Y(b.contour), w, Y(b.value) - Y(b.contour));
+    });
+
+    // 轮廓线
+    g.strokeStyle = '#d0552f';
+    g.lineWidth = 1.6;
+    g.setLineDash([5, 4]);
+    g.beginPath();
+    let started = false;
+    bands.forEach((b, i) => {
+      if (b.contour == null) return;
+      const x = X(i), y = Y(b.contour);
+      if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
+    });
+    g.stroke();
+    g.setLineDash([]);
+  }
+
+  // 实测曲线
+  g.strokeStyle = '#2b7fc4';
+  g.lineWidth = 2;
+  g.beginPath();
+  bands.forEach((b, i) => {
+    const x = X(i), y = Y(b.value);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  });
+  g.stroke();
+
+  // 数据点
+  g.fillStyle = '#2b7fc4';
+  bands.forEach((b, i) => {
+    g.beginPath();
+    g.arc(X(i), Y(b.value), 2.2, 0, Math.PI * 2);
+    g.fill();
+  });
+
+  // 右下角评价值
+  if (d.value) {
+    g.fillStyle = '#1b5f98';
+    g.font = 'bold 13px "Microsoft YaHei"';
+    g.textAlign = 'right';
+    g.fillText(d.value, W - pad.r, H - 4);
+  }
+}
+
+/* ---------- 清单编辑 ---------- */
+function collectItems() {
+  return rp.items.map((it, i) => ({ ...it, order: i + 1 }));
+}
+
+async function saveReportPlan(quiet) {
+  try {
+    await postJSON('/api/report/plan', { items: collectItems() });
+    if (!quiet) toast('清单已保存', 1600);
+    return true;
+  } catch (e) {
+    toast('保存失败：' + e.message, 3000);
+    return false;
+  }
+}
+
+function applyFormToItem() {
+  const it = rp.items[rp.cur];
+  if (!it) return;
+  it.name = $('#rpName').value.trim();
+  it.kind = $('#rpKind').value;
+  it.table = $('#rpTableNo').value.trim();
+  it.design = $('#rpDesign').value.trim();
+  const [inA, inB] = parseSel($('#rpInner').value);
+  it.inner = inA || inB;
+  const [outA, outB] = parseSel($('#rpOuter').value);
+  it.outer = outA || outB;
+}
+
+async function refreshReport() {
+  const c = await api('/api/report/compute');
+  rp.rows = c.rows || [];
+  renderReportTable();
+  if (rp.cur >= 0) loadReportDetail(rp.cur);
+}
+
+['#rpName', '#rpTableNo', '#rpDesign'].forEach(sel => {
+  $(sel).addEventListener('change', async () => {
+    applyFormToItem();
+    await saveReportPlan(true);
+    await refreshReport();
+  });
+});
+$('#rpKind').addEventListener('change', async () => {
+  applyFormToItem();
+  await saveReportPlan(true);
+  await refreshReport();
+});
+['#rpInner', '#rpOuter'].forEach(sel => {
+  $(sel).addEventListener('change', async () => {
+    applyFormToItem();
+    await saveReportPlan(true);
+    await refreshReport();
+  });
+});
+
+$('#rpAdd').addEventListener('click', async () => {
+  rp.items.push({
+    name: '', kind: '隔声', table: '', order: rp.items.length + 1,
+    file: '', inner: '', outer: '', design: '', room: '',
+  });
+  await saveReportPlan(true);
+  rp.cur = rp.items.length - 1;
+  renderReportTable();
+  selectReportRow(rp.cur);
+});
+
+$('#rpDel').addEventListener('click', async () => {
+  if (rp.cur < 0 || rp.cur >= rp.items.length) return toast('先选中一行', 2000);
+  rp.items.splice(rp.cur, 1);
+  await saveReportPlan(true);
+  rp.cur = Math.min(rp.cur, rp.items.length - 1);
+  await refreshReport();
+  if (rp.cur >= 0) selectReportRow(rp.cur);
+  else clearReportDetail();
+});
+
+$('#rpPair').addEventListener('click', async () => {
+  if (!confirm('按测量时序重新生成配对草稿？\n会覆盖当前清单。')) return;
+  rp.items = [];
+  try {
+    const j = await api('/api/report/plan?suggest=1');
+    // 强制重建：先删空再让服务端重新建议
+    await postJSON('/api/report/plan', { items: [] });
+    const k = await api('/api/report/plan');
+    rp.items = k.items || [];
+    rp.groups = k.groups || rp.groups;
+    await saveReportPlan(true);
+    await loadReport();
+    toast(`已生成 ${rp.items.length} 条配对草稿，请核对内侧/外侧`, 3000);
+  } catch (e) {
+    toast('生成失败：' + e.message, 3000);
+  }
+});
+
+$('#rpSave').addEventListener('click', () => saveReportPlan(false));
+
+$('#rpExport').addEventListener('click', async () => {
+  const project = $('#rpProject').value.trim() || '报告';
+  try {
+    const j = await postJSON('/api/report/export', {
+      meta: { project },
+    });
+    const a = document.createElement('a');
+    a.href = j.url;
+    a.download = j.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast(`已生成 ${j.rows} 行报告：${j.name}（${j.okCount} 行有效）`, 3600);
+  } catch (e) {
+    toast('生成失败：' + e.message, 3200);
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (rp.detail && !$('#viewReport').hidden) drawReportChart(rp.detail);
+});
 
 /* ============================================================ 批量整理 */
 function updateBatchUI() {
@@ -2019,8 +2454,22 @@ $('#bdRevert').addEventListener('click', async () => {
 });
 
 /* ============================================================ 启动 */
+/* 心跳：桌面启动器靠它判断窗口是否还开着；页面关掉即停止 */
+function startHeartbeat() {
+  const beat = () => {
+    if (document.visibilityState === 'hidden') return;
+    fetch('/api/ping', { cache: 'no-store' }).catch(() => {});
+  };
+  beat();
+  setInterval(beat, 3000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') beat();
+  });
+}
+
 (function boot() {
   drawEmptyGrid();
+  startHeartbeat();
   // 首次进入自动读一次，省得用户先点按钮；点击【数据读取】可随时重扫
   scan(null);
 })();
