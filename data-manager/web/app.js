@@ -2303,15 +2303,16 @@ function drawReportChart(d) {
   // 纵轴 0 线到顶边总高（含柱区），用于 dB→y 映射
   const fullH = yBase - yTop;
 
+  // Y 轴按数据自适应：取 NR 与轮廓的最大值，向上留 5dB 余量，取整到 10 的倍数。
+  // 下限 30dB，避免数据很少时图被拉得过分扁平。
   const vals = [];
   d.bands.forEach(b => {
     if (b.value != null) vals.push(b.value);
     if (b.contour != null) vals.push(b.contour);
   });
-  let vmin = Math.min(0, ...vals);
-  let vmax = Math.max(60, ...vals.map(v => v + 5));
-  vmax = Math.ceil(vmax / 10) * 10;
-  vmin = 0;
+  const peak = vals.length ? Math.max(...vals) : 0;
+  let vmax = Math.max(30, Math.ceil((peak + 5) / 10) * 10);
+  const vmin = 0;
 
   // ---- 对数横轴 ----
   const fmin = 100, fmax = 5000;
