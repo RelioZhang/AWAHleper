@@ -1291,6 +1291,16 @@ class Handler(BaseHTTPRequestHandler):
                                         body.get("value"))
                 return self._json(dict(ok=True, **res))
 
+            if u.path == "/api/import":
+                # xlsx(base64) -> 侧车编辑；本地快速编辑后导回
+                import base64 as _b64
+                raw = body.get("data") or ""
+                if not raw:
+                    raise ValueError("没有收到文件内容")
+                data = _b64.b64decode(raw)
+                res = self._import_xlsx(data)
+                return self._json(dict(ok=True, **res))
+
             if u.path == "/api/report/plan":
                 # 保存整份清单
                 if report_core is None:
@@ -1326,6 +1336,131 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(dict(ok=False, error=str(e)), 400)
         except Exception as e:                              # noqa: BLE001
             return self._json(dict(ok=False, error=f"{type(e).__name__}: {e}"), 500)
+
+    # ---------------- 数据导入（xlsx -> 侧车编辑） ----------------
+    @staticmethod
+    def _band_key_from_header(h: str):
+        """表头 '1.25kHz' / '63Hz' / '8kHz' -> 频带键；不匹配返回 None。"""
+        m = re.match(r"^([\d.]+)\s*(kHz|Hz)$", h.strip(), re.I)
+        if not m:
+            return None
+        v = float(m.group(1))
+        if m.group(2).lower() == "khz":
+            v *= 1000
+        return str(int(v)) if v == int(v) else str(v).rstrip("0").rstrip(".")
+
+    def _import_xlsx(self, data: bytes) -> dict:
+        """把用户编辑过的 xlsx 读回来，差异写进侧车。只认整理视图导出的列。"""
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            raise RuntimeError("服务器缺少 openpyxl，无法导入 xlsx")
+        import io as _io
+        wb = load_workbook(_io.BytesIO(data), data_only=True)
+        ws = wb.active
+
+        # 找表头行（含「文件名」的那一行）
+        hrow = None
+        for r in range(1, min(ws.max_row, 12) + 1):
+            vals = [str(ws.cell(r, c).value or "") for c in range(1, ws.max_column + 1)]
+            if "文件名" in vals:
+                hrow = r
+                headers = vals
+                break
+        if hrow is None:
+            raise ValueError("找不到表头行（需要包含「文件名」列）")
+
+        # 每列 -> 编辑路径
+        colmap = {}                    # col idx -> path or ('tag',)
+        for c, h in enumerate(headers, 1):
+            h = h.strip()
+            if not h or h in ("序号", "文件名", "测试时间", "判定", "实测值"):
+                continue
+            if h == "测点名":
+                colmap[c] = "point"
+            elif h == "测试日期":
+                colmap[c] = "date"
+            elif h == "经历时间":
+                colmap[c] = "ts"
+            elif h == "标记":
+                colmap[c] = "_tag"
+            elif h in ("NR", "NC"):
+                colmap[c] = f"rating:Leq,T:{h}"
+            else:
+                m = re.match(r"^W_([ACZ])$", h)
+                if m:
+                    colmap[c] = f"wa:Leq,T:{m.group(1)}"
+                    continue
+                m = re.match(r"^SPL\(([ACZUTB])\)$", h)
+                if m:
+                    colmap[c] = f"SPL@{m.group(1)}"      # 按文件类型再定
+                    continue
+                bk = self._band_key_from_header(h)
+                if bk is not None:
+                    colmap[c] = f"band:Leq,T:{bk}"
+
+        applied = skipped = badrows = 0
+        errors = []
+        for r in range(hrow + 1, ws.max_row + 1):
+            fname = str(ws.cell(r, headers.index("文件名") + 1).value or "").strip()
+            if not fname:
+                continue
+            if fname not in self.store.records:
+                badrows += 1
+                errors.append(f"{fname}: 不在当前数据目录")
+                continue
+            rec = self.store.records[fname]
+            kind = rec["kind"]
+            detail = self.store.detail(fname, organize=True)
+            spl_now = detail.get("spl", {}).get("Leq,T", {})
+            wa_now = detail.get("wa", {}).get("Leq,T", {})
+            rating_now = detail.get("rating", {}).get("Leq,T", {})
+            band_now = detail.get("metrics", {}).get("Leq,T", {})
+
+            for c, path in colmap.items():
+                v = ws.cell(r, c).value
+                if v is None:
+                    continue
+                txt = str(v).strip()
+                if txt in ("", "—", "/", "-"):
+                    continue
+                real = path
+                cur = None
+                if path.startswith("SPL@"):
+                    k = path[4:]
+                    if kind == "1/3OCT":
+                        real, cur = f"spl:Leq,T:{k}", spl_now.get(k)
+                    else:
+                        real, cur = f"wa:Leq,T:{k}", wa_now.get(k)
+                elif path.startswith("wa:"):
+                    cur = wa_now.get(path.split(":")[-1])
+                elif path.startswith("rating:"):
+                    cur = rating_now.get(path.split(":")[-1])
+                elif path.startswith("band:"):
+                    cur = band_now.get(path.split(":")[-1])
+                elif path in ("point", "date", "ts"):
+                    cur = {"point": detail.get("point"), "date": detail.get("date"),
+                           "ts": detail.get("ts")}[path]
+                elif path == "_tag":
+                    cur = self.store.edits.get_tag(self.store.group_of(fname))
+
+                # 数值比较留 0.05 容差，避免 47.9 vs 47.90 误判
+                try:
+                    if cur is not None and abs(float(txt) - float(cur)) < 0.05:
+                        skipped += 1
+                        continue
+                except (TypeError, ValueError):
+                    if str(cur or "") == txt:
+                        skipped += 1
+                        continue
+                try:
+                    self.store.update(fname, real, txt)
+                    applied += 1
+                except ValueError as e:
+                    errors.append(f"{fname} {path}: {e}")
+
+        return dict(applied=applied, skipped=skipped, badrows=badrows,
+                    errors=errors[:8])
 
     # ---------------- 报告：导出 ----------------
     def _export_report(self, body: dict) -> dict:
