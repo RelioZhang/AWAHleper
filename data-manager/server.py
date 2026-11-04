@@ -41,8 +41,29 @@ except Exception:                           # noqa: BLE001
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(HERE, "web")
-CONFIG_FILE = os.path.join(HERE, ".config.json")     # 记住上次 + 最近使用（不入库）
 ENV_DIR = os.environ.get("AWA_DATA_DIR", "")
+
+
+def _cfg_dir() -> str:
+    """配置文件目录。
+
+    开发 / 源码运行：就放模块目录。
+    PyInstaller 打包后：__file__ 指向临时解压目录（每次启动都变），
+    配置写到那里会丢失，所以改放 %APPDATA%/AWAHelper。
+    """
+    if getattr(sys, "frozen", False):                    # 打包运行
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        d = os.path.join(base, "AWAHelper")
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            d = os.path.expanduser("~")
+        return d
+    return HERE
+
+
+CFG_DIR = _cfg_dir()
+CONFIG_FILE = os.path.join(CFG_DIR, ".config.json")  # 记住上次 + 最近使用
 MAX_RECENT = 8
 
 
@@ -114,12 +135,18 @@ def find_data_dirs(root: str, limit: int = 10, depth: int = 1) -> list[dict]:
 
 
 def default_data_dir() -> str:
-    """上次使用 > 环境变量 > 从程序目录往上找含 *.AWA 的目录（含下一层）。"""
+    """上次使用 > 环境变量 > 从程序目录往上找含 *.AWA 的目录（含下一层）。
+
+    打包运行时程序目录=exe 所在目录；源码运行=模块上一级。
+    """
     cfg_dir = load_config().get("last", "")
     for cand in (cfg_dir, ENV_DIR):
         if cand and os.path.isdir(cand):
             return os.path.abspath(cand)
-    base = os.path.dirname(HERE)
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        base = os.path.dirname(HERE)
     for _ in range(4):                      # 逐级向上探测
         if glob.glob(os.path.join(base, "*.AWA")):
             return os.path.abspath(base)
