@@ -238,6 +238,20 @@ def plan_path(data_dir: str) -> str:
     return os.path.join(data_dir, PLAN_FILE)
 
 
+def tag_of(store, name: str) -> str:
+    """某个文件所属测量组在【数据整理】里打的标记：噪声级 / 隔声 / 空。
+
+    报告只认标记过的数据——没标记就说明测点归属还没确认，
+    不允许出现在报告里（来源必须可追溯）。
+    """
+    if not store or not name:
+        return ""
+    try:
+        return store.edits.get_tag(store.group_of(name)) or ""
+    except Exception:                       # noqa: BLE001
+        return ""
+
+
 def load_plan(data_dir: str) -> list[Item]:
     p = plan_path(data_dir)
     if not os.path.isfile(p):
@@ -259,6 +273,34 @@ def save_plan(data_dir: str, items: list[Item]) -> None:
                   f, ensure_ascii=False, indent=1)
 
 
+def load_plan_checked(store) -> list[Item]:
+    """读清单，顺手剔掉不该出现的隔声行。
+
+    早先的草稿会把任意 1/3OCT 两两配对（一次能冒出十几组），
+    这些行没有标记背书，不能留在清单里。这里按「隔声」标记清理，
+    清完顺手写回，下次打开就是干净的。
+    """
+    items = load_plan(store.dir)
+    if not items:
+        return items
+
+    keep, dropped = [], 0
+    for it in items:
+        if it.kind == KIND_INSUL:
+            bad = any(f and (f not in store.records or tag_of(store, f) != KIND_INSUL)
+                      for f in (it.inner, it.outer))
+            if bad:
+                dropped += 1
+                continue
+        keep.append(it)
+
+    if dropped:
+        for i, it in enumerate(keep, 1):
+            it.order = i
+        save_plan(store.dir, keep)
+    return keep
+
+
 def suggest_plan(store) -> list[Item]:
     """首次进入报告页时给一份草稿：按标记和测量时间自动配对。
 
@@ -274,7 +316,12 @@ def suggest_plan(store) -> list[Item]:
             tag = (store.edits.data.get("_tags", {}) or {}).get(g["gid"], "")
         except Exception:                   # noqa: BLE001
             tag = ""
-        (noise_groups if tag == KIND_NOISE else insul_groups).append(g)
+        # 只收「明确打了标记」的组；未标记的数据不进报告，
+        # 否则报告里会出现来源不明的行（2026-11-04 需求 25）
+        if tag == KIND_NOISE:
+            noise_groups.append(g)
+        elif tag == KIND_INSUL:
+            insul_groups.append(g)
 
     items = []
     for i, g in enumerate(noise_groups, 1):
@@ -364,6 +411,12 @@ def compute(store, item: Item) -> Result:
     else:
         if not item.inner or not item.outer:
             r.error = "内/外文件没选全"
+            return r
+        # 硬门槛：两侧都必须在【数据整理】里标成「隔声」，
+        # 没标记的 1/3OCT 数据一律不出数（2026-11-04 需求）
+        miss = [f for f in (item.inner, item.outer) if tag_of(store, f) != KIND_INSUL]
+        if miss:
+            r.error = "未在【数据整理】标为「隔声」：" + "、".join(miss)
             return r
         nr = read_nr(store, item.inner, item.outer)
         if nr is None:
@@ -578,6 +631,8 @@ def write_xlsx(results: list[Result], out_path: str,
                    "仪器未给时按 ANSI S1.2 曲线族反插得到。"),
         ("隔声", "声压级差 NR = 内侧 - 外侧，18 个 1/3 倍频程（100Hz~5kHz），"
                  "表内按整数呈现。"),
+        ("隔声来源", "只取【数据整理】里标为「隔声」的 1/3OCT 测量；"
+                     "没有标记的数据不会进入报告。"),
         ("NIC", "ASTM E413：只用 125Hz~4000Hz 共 16 个频带判级，"
                 "轮廓[-16…4]，总不利偏差 ≤32 且单点 ≤8。"),
         ("负值", "NIC 若为负数说明外侧比内侧还响，多半是内/外文件配错了，"
@@ -609,7 +664,7 @@ if __name__ == "__main__":                  # pragma: no cover
     st.scan()
     print(f"扫描到 {len(st.records)} 个文件，{len(st.groups())} 组测量")
 
-    items = load_plan(args.dir)
+    items = load_plan_checked(st)
     if not items:
         items = suggest_plan(st)
         save_plan(args.dir, items)
