@@ -1354,6 +1354,69 @@ class Handler(BaseHTTPRequestHandler):
                     okCount=sum(1 for r in results if r.ok))
 
     # ---------------- 报告：行数据与明细 ----------------
+    def _sync_plan_with_tags(self, items: list) -> list:
+        """按当前标记对账清单（数据整理 ↔ 报告联动）。
+
+        - 数据整理里新打标的组 → 报告自动加行
+        - 取消标记的组 → 报告自动移除
+        - 用户手填的房间/工况/设计值/表号 → 原样保留
+        """
+        if report_core is None:
+            return items
+        tagged = {}                      # file -> (kind, group)
+        for g in self.store.groups():
+            tag = self.store.edits.get_tag(g["gid"])
+            if not tag:
+                continue
+            f = (f"OCT_{g['gid']}.AWA" if tag == report_core.KIND_NOISE
+                 else f"1_3_{g['gid']}.AWA")
+            if f in self.store.records:
+                tagged[f] = (tag, g)
+
+        # 噪声级：一文件一行，标记在就保留（含手填字段）
+        kept, seen = [], set()
+        old_by_file = {}
+        for it in items:
+            f = it.file or it.inner
+            if f:
+                old_by_file.setdefault(f, it)
+            if (it.kind == report_core.KIND_NOISE and f in tagged
+                    and tagged[f][0] == report_core.KIND_NOISE):
+                kept.append(it)
+                seen.add(f)
+
+        # 噪声级新打标的组 → 追加
+        for f, (tag, g) in tagged.items():
+            if tag != report_core.KIND_NOISE or f in seen:
+                continue
+            kept.append(report_core.Item(
+                name=g.get("point") or "", kind=tag,
+                file=f, inner=f, table="3.1-1", order=0))
+
+        # 隔声：每次按标记全量重建配对（设计值/名称按内侧文件继承）
+        insul_groups = [(f"1_3_{g['gid']}.AWA", g) for g in self.store.groups()
+                        if self.store.edits.get_tag(g["gid"]) == report_core.KIND_INSUL
+                        and f"1_3_{g['gid']}.AWA" in self.store.records]
+        insul_groups.sort(key=lambda x: ((x[1].get("date") or ""),
+                                         (x[1].get("time") or "")))
+        seq = 0
+        for i in range(0, len(insul_groups) - 1, 2):
+            (fa, ga), (fb, gb) = insul_groups[i], insul_groups[i + 1]
+            seq += 1
+            old_it = old_by_file.get(fa)
+            kept.append(report_core.Item(
+                name=(old_it.name if old_it and old_it.name
+                      else ga.get("point") or f"隔声测点{seq}"),
+                kind=report_core.KIND_INSUL,
+                table=(old_it.table if old_it else ""),
+                inner=fa, outer=fb,
+                design=(old_it.design if old_it else ""),
+                order=0))
+
+        for i, it in enumerate(kept, 1):
+            it.order = i
+        return kept
+
     @staticmethod
     def _report_row(item, r) -> dict:
         """表格一行：清单字段 + 计算结果。"""
@@ -1372,6 +1435,7 @@ class Handler(BaseHTTPRequestHandler):
         )
         return d
 
+    @staticmethod
     @staticmethod
     def _report_detail(r) -> dict:
         """右侧预览：频带表 + 曲线数据。"""
@@ -1441,6 +1505,12 @@ class Handler(BaseHTTPRequestHandler):
                                 for g in self.store.groups()]))
 
                 items = report_core.load_plan_checked(self.store)
+                # 与数据整理的标记对账：标记增删自动反映到报告（保留手填字段）
+                synced = self._sync_plan_with_tags(items)
+                if [(x.kind, x.file or x.inner) for x in synced] != \
+                   [(x.kind, x.file or x.inner) for x in items]:
+                    report_core.save_plan(self.store.dir, synced)
+                items = synced
                 if not items and q.get("suggest") != "0":
                     items = report_core.suggest_plan(self.store)
                     if items:
