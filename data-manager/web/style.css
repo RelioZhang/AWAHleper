@@ -1317,3 +1317,15 @@ body.rp-noise .rp-body{flex-direction:column;}
 body.rp-noise .rp-left{flex:1 1 auto;border-right:0;}
 body.rp-noise .rp-right{border-top:1px solid var(--line);}
 body.rp-noise .rp-tablewrap{flex:1 1 auto;overflow:auto;padding:8px 10px;}
+
+/* 来源行：显示当前列来自哪个测量 */
+.rp-source{
+  flex:0 0 26px;
+  display:flex;align-items:center;gap:8px;
+  padding:0 12px;
+  background:#f4f9fe;
+  border-bottom:1px solid var(--line-soft);
+  font-size:11.5px;color:#3d6a94;
+}
+.rp-source b{color:#1b5f98;}
+.rp-source .unset{color:#b2553a;}
