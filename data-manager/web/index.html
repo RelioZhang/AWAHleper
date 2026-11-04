@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AWA 声学数据管理 V3.0</title>
-<link rel="stylesheet" href="/style.css?v=3.2.1">
+<link rel="stylesheet" href="/style.css?v=3.3.0">
 </head>
 <body>
 <div class="app">
@@ -362,8 +362,8 @@
               <th style="width:34px">#</th>
               <th style="width:112px">测点名称</th>
               <th style="width:54px">类型</th>
-              <th style="width:96px">内侧</th>
-              <th style="width:96px">外侧</th>
+              <th style="width:96px">发声室</th>
+              <th style="width:96px">接收室</th>
               <th style="width:58px">实测值</th>
               <th style="width:52px">判定</th>
             </tr>
@@ -410,12 +410,21 @@
           <input id="rpRoom" type="text" placeholder="0806 大床房"></div>
         <div class="rp-field" data-kind="噪声级"><label>工况</label>
           <input id="rpCond" type="text" placeholder="FCU 低速"></div>
-        <div class="rp-field"><label>内侧</label>
+        <div class="rp-field"><label>发声室</label>
           <select id="rpInner" class="rp-sel"></select></div>
-        <div class="rp-field"><label>外侧</label>
+        <div class="rp-field"><label>接收室</label>
           <select id="rpOuter" class="rp-sel"></select></div>
         <div class="rp-field"><label>设计值</label>
           <input id="rpDesign" type="text" placeholder="NIC-28+ / NC-30"></div>
+        <div class="rp-field" data-kind="隔声"><label>声压级差平移</label>
+          <div class="rp-shift">
+            <button class="rp-step" id="rpShiftDown" title="下移 1 dB">−</button>
+            <input id="rpShift" type="number" step="0.5" value="0" title="整体上下平移，修正背景噪声等干扰">
+            <span class="rp-unit">dB</span>
+            <button class="rp-step" id="rpShiftUp" title="上移 1 dB">+</button>
+            <button class="rp-step reset" id="rpShiftReset" title="归零">↺</button>
+          </div>
+        </div>
       </div>
 
       <div class="rp-preview">
@@ -516,6 +525,6 @@
   <div class="loading-text">正在读取数据…</div>
 </div>
 
-<script src="/app.js?v=3.2.1"></script>
+<script src="/app.js?v=3.3.0"></script>
 </body>
 </html>
