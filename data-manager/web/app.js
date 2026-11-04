@@ -2263,144 +2263,298 @@ function renderBandTable(d) {
   }
 }
 
-/* NIC 曲线：横轴频带（对数），纵轴 dB */
+/* ============================================================
+   NIC 频率特性图：1:1 复刻学术报告样式
+   - 横轴 1/3 倍频程（对数），100Hz~5kHz
+   - 红线粗实线 = NIC 评价轮廓（阶梯）
+   - 深蓝菱形 + 折线 = 实测声压级差 NR
+   - 底部米色柱 = 各频带扣分（deficiency）
+   - 图例在下方，带边框
+   ============================================================ */
+const NIC_BANDS = [100, 125, 160, 200, 250, 315, 400, 500, 630, 800,
+                   1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000];
+
 function drawReportChart(d) {
   const cv = $('#rpCanvas');
-  const rect = cv.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const W = Math.max(rect.width, 320);
-  const H = Math.max(rect.height, 170);
-  cv.width = W * dpr;
-  cv.height = H * dpr;
+  const W = cv.width;                 // 固定 1400，不随窗口变
+  const H = cv.height;                // 固定 1040
   const g = cv.getContext('2d');
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, W, H);
+  g.setTransform(1, 0, 0, 1, 0, 0);
   g.fillStyle = '#fff';
   g.fillRect(0, 0, W, H);
 
-  const bands = (d.bands || []).filter(b => b.value != null);
-  if (!bands.length) {
+  if (!d || !d.bands || !d.bands.length) {
     g.fillStyle = '#9aa8b6';
-    g.font = '12px "Microsoft YaHei"';
+    g.font = '28px "Times New Roman", serif';
     g.textAlign = 'center';
-    g.fillText('该测点没有可用的频带数据', W / 2, H / 2);
+    g.fillText('No data', W / 2, H / 2);
     return;
   }
 
-  const pad = { l: 40, r: 12, t: 14, b: 26 };
+  // ---- 版面（与原图比例一致：上留白窄、下留图例） ----
+  // 与报告图一致：主图（0~60dB）在上，柱状区在 0 线下方（0~8dB 反向）
+  const pad = { l: 210, r: 100, t: 56, b: 300 };
   const iw = W - pad.l - pad.r;
-  const ih = H - pad.t - pad.b;
+  const plotH = H - pad.t - pad.b;          // 主图高度（含柱状区）
+  const barZone = 92;                        // 0 线下方给柱状的高度
+  const ih = plotH - barZone;                // 0~vmax 的高度
+  const yBase = pad.t + ih;                  // 0 dB 基线
+  const yTop = pad.t;
 
-  const vals = bands.map(b => b.value);
-  (d.kind === '隔声' ? bands : []).forEach(b => {
+  const vals = [];
+  d.bands.forEach(b => {
+    if (b.value != null) vals.push(b.value);
     if (b.contour != null) vals.push(b.contour);
   });
-  (d.rawBands || []).forEach(v => { if (v != null) vals.push(v); });
-  let lo = Math.floor(Math.min(...vals) / 5) * 5 - 5;
-  let hi = Math.ceil(Math.max(...vals) / 5) * 5 + 5;
-  if (hi - lo < 20) { hi = lo + 20; }
+  let vmin = Math.min(0, ...vals);
+  let vmax = Math.max(60, ...vals.map(v => v + 5));
+  vmax = Math.ceil(vmax / 10) * 10;
+  vmin = 0;
 
-  const n = bands.length;
-  const X = i => pad.l + (n > 1 ? iw * i / (n - 1) : iw / 2);
-  const Y = v => pad.t + ih - (v - lo) / (hi - lo) * ih;
+  // ---- 对数横轴 ----
+  const fmin = 100, fmax = 5000;
+  const lx = f => pad.l + (Math.log10(f) - Math.log10(fmin)) /
+                     (Math.log10(fmax) - Math.log10(fmin)) * iw;
 
-  // 网格
-  g.strokeStyle = '#eef3f8';
-  g.lineWidth = 1;
-  const stepY = Math.max(5, Math.round((hi - lo) / 6 / 5) * 5);
-  for (let v = lo; v <= hi + 1e-6; v += stepY) {
-    g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(W - pad.r, Y(v)); g.stroke();
-    g.fillStyle = '#8b9aa9';
-    g.font = '10px Consolas';
-    g.textAlign = 'right';
-    g.fillText(String(v), pad.l - 5, Y(v) + 3);
-  }
+  // ---- 纵轴刻度（0~60，每 10 一格，每 5 一小格） ----
+  const yOf = v => yBase - (v / vmax) * (ih - 0);
+  const yTop2 = yBase - ih;
 
-  // 频带标签
-  g.fillStyle = '#8b9aa9';
-  g.font = '10px Consolas';
-  g.textAlign = 'center';
-  bands.forEach((b, i) => {
-    if (n > 12 && i % 2 === 1) return;
-    g.fillText(b.label, X(i), H - pad.b + 13);
+  // 绘图区背景
+  g.fillStyle = '#fff';
+  g.fillRect(pad.l, pad.t, iw, ih);
+
+  // 网格：竖线（每个频带）
+  g.strokeStyle = '#b8b8b8';
+  g.lineWidth = 1.4;
+  NIC_BANDS.forEach(hz => {
+    const x = Math.round(lx(hz)) + 0.5;
+    g.beginPath(); g.moveTo(x, yBase + barZone); g.lineTo(x, yTop); g.stroke();
   });
-
-  // 扣分频带阴影
-  if (d.kind === '隔声') {
-    bands.forEach((b, i) => {
-      if (!b.deficit || b.deficit <= 0 || b.contour == null) return;
-      const w = Math.max(iw / Math.max(n - 1, 1) * 0.7, 6);
-      g.fillStyle = 'rgba(240,170,140,.28)';
-      g.fillRect(X(i) - w / 2, Y(b.contour), w, Y(b.value) - Y(b.contour));
-    });
-
-    // 轮廓线
-    g.strokeStyle = '#d0552f';
-    g.lineWidth = 1.6;
-    g.setLineDash([5, 4]);
-    g.beginPath();
-    let started = false;
-    bands.forEach((b, i) => {
-      if (b.contour == null) return;
-      const x = X(i), y = Y(b.contour);
-      if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
-    });
-    g.stroke();
-    g.setLineDash([]);
+  // 横线（每 10dB 主网格）
+  for (let v = 0; v <= vmax; v += 10) {
+    const y = Math.round(yOf(v)) + 0.5;
+    g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
+  }
+  // 次网格（每 5dB，细）
+  g.strokeStyle = '#dcdcdc';
+  g.lineWidth = 1;
+  for (let v = 5; v <= vmax; v += 10) {
+    const y = Math.round(yOf(v)) + 0.5;
+    g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
   }
 
-  // 平移前的原始曲线（仅在有平移时显示，灰色虚线）
-  const raw = d.rawBands || [];
-  if (d.kind === '隔声' && Math.abs(Number(d.shift) || 0) > 1e-9 && raw.length) {
-    g.strokeStyle = '#b0bcc8';
-    g.lineWidth = 1.4;
-    g.setLineDash([3, 3]);
-    g.beginPath();
-    let st = false;
-    raw.forEach((v, i) => {
-      if (v == null || i >= bands.length) return;
-      const x = X(i), y = Y(v);
-      if (!st) { g.moveTo(x, y); st = true; } else g.lineTo(x, y);
-    });
-    g.stroke();
-    g.setLineDash([]);
-  }
-
-  // 实测曲线
-  g.strokeStyle = '#2b7fc4';
+  // 零基线（粗）
+  g.strokeStyle = '#333';
   g.lineWidth = 2;
   g.beginPath();
-  bands.forEach((b, i) => {
-    const x = X(i), y = Y(b.value);
-    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-  });
+  g.moveTo(pad.l, Math.round(yBase) + 0.5);
+  g.lineTo(W - pad.r, Math.round(yBase) + 0.5);
   g.stroke();
 
-  // 数据点
-  g.fillStyle = '#2b7fc4';
-  bands.forEach((b, i) => {
-    g.beginPath();
-    g.arc(X(i), Y(b.value), 2.2, 0, Math.PI * 2);
-    g.fill();
+  // 外框
+  g.strokeStyle = '#333';
+  g.lineWidth = 2.2;
+  g.strokeRect(pad.l, pad.t, iw, plotH);
+
+  // ---- 刻度标签 ----
+  g.fillStyle = '#111';
+  g.font = '30px "Times New Roman", serif';
+  g.textAlign = 'right';
+  g.textBaseline = 'middle';
+  for (let v = 0; v <= vmax; v += 10) {
+    g.fillText(String(v), pad.l - 16, yOf(v));
+  }
+
+  // 横轴频带标签（与原图一致：100/200/400/800/1600/3150）
+  const labels = [100, 200, 400, 800, 1600, 3150, 5000];
+  g.textAlign = 'center';
+  g.textBaseline = 'top';
+  labels.forEach(hz => {
+    let txt = hz >= 1000 ? (hz === 5000 ? '5k' : String(hz)) : String(hz);
+    if (hz === 3150) txt = '3150';
+    g.fillText(txt, lx(hz), yBase + barZone + 16);
   });
 
-  // 左上角平移标注
-  const sh = Number(d.shift) || 0;
-  if (d.kind === '隔声' && Math.abs(sh) > 1e-9) {
-    g.fillStyle = '#c96a3a';
-    g.font = 'bold 11px "Microsoft YaHei"';
-    g.textAlign = 'left';
-    g.fillText(`已平移 ${sh > 0 ? '+' : ''}${sh.toFixed(1)} dB`, pad.l + 4, pad.t + 12);
+  // 轴标题
+  g.font = '32px "Times New Roman", serif';
+  g.fillText('Frequency, Hz', pad.l + iw / 2, yBase + barZone + 66);
+
+  g.save();
+  g.translate(56, pad.t + ih / 2);
+  g.rotate(-Math.PI / 2);
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('Noise reduction, dB', 0, 0);
+  g.restore();
+
+  // ---- 扣分柱（米色填充 + 黑边） ----
+  const bars = [];
+  if (d.kind === '隔声') {
+    d.bands.forEach(b => {
+      if (b.deficit != null && b.deficit > 0) {
+        bars.push({ i: NIC_BANDS.indexOf(b.hz), v: b.deficit });
+      }
+    });
   }
+  const bw = Math.min(iw / NIC_BANDS.length * 0.5, 30);
+  bars.forEach(({ i, v }) => {
+    if (i < 0) return;
+    const x = lx(NIC_BANDS[i]);
+    const h = Math.min((v / 8) * barZone, barZone);   // 扣分最大 8dB 占满
+    g.fillStyle = '#fdfbe8';
+    g.strokeStyle = '#333';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.rect(x - bw / 2, yBase, bw, h);       // 向下生长
+    g.fill();
+    g.stroke();
+  });
+
+  // ---- NIC 轮廓（红粗实线，阶梯） ----
+  if (d.kind === '隔声') {
+    g.strokeStyle = '#ee1111';
+    g.lineWidth = 8;
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    g.beginPath();
+    const pts = [];
+    d.bands.forEach(b => {
+      if (b.contour == null) return;
+      const i = NIC_BANDS.indexOf(b.hz);
+      if (i < 0) return;
+      pts.push({ x: lx(b.hz), y: yOf(b.contour), i });
+    });
+    // 相邻点之间用水平-竖直阶梯连接（评价轮廓是阶梯形）
+    pts.forEach((p, k) => {
+      if (k === 0) g.moveTo(p.x, p.y);
+      else {
+        const prev = pts[k - 1];
+        g.lineTo(p.x, prev.y);       // 先水平
+        g.lineTo(p.x, p.y);          // 再竖直
+      }
+    });
+    g.stroke();
+  }
+
+  // ---- NR 实测（深蓝菱形 + 折线） ----
+  const nrs = [];
+  d.bands.forEach(b => {
+    if (b.value == null) return;
+    const i = NIC_BANDS.indexOf(b.hz);
+    if (i < 0) return;
+    nrs.push({ x: lx(b.hz), y: yOf(b.value), i });
+  });
+  if (nrs.length) {
+    g.strokeStyle = '#141aa8';
+    g.lineWidth = 3.4;
+    g.lineJoin = 'round';
+    g.beginPath();
+    nrs.forEach((p, k) => {
+      if (k === 0) g.moveTo(p.x, p.y);
+      else g.lineTo(p.x, p.y);
+    });
+    g.stroke();
+
+    // 菱形标记
+    g.fillStyle = '#141aa8';
+    nrs.forEach(p => {
+      const r = 9;
+      g.beginPath();
+      g.moveTo(p.x, p.y - r);
+      g.lineTo(p.x + r, p.y);
+      g.lineTo(p.x, p.y + r);
+      g.lineTo(p.x - r, p.y);
+      g.closePath();
+      g.fill();
+    });
+  }
+
+  // ---- 图例（底部方框） ----
+  const ly = H - 96;
+  g.strokeStyle = '#333';
+  g.lineWidth = 2;
+  const items = [
+    { t: 'Deficiency', draw: (x, y) => {
+        g.fillStyle = '#fdfbe8'; g.strokeStyle = '#333'; g.lineWidth = 2;
+        g.beginPath(); g.rect(x, y - 10, 40, 20); g.fill(); g.stroke();
+      } },
+    { t: 'NR', draw: (x, y) => {
+        g.strokeStyle = '#141aa8'; g.lineWidth = 3.4;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + 40, y); g.stroke();
+        g.fillStyle = '#141aa8';
+        g.beginPath();
+        g.moveTo(x + 20, y - 8); g.lineTo(x + 28, y);
+        g.lineTo(x + 20, y + 8); g.lineTo(x + 12, y);
+        g.closePath(); g.fill();
+      } },
+    { t: 'NIC contour', draw: (x, y) => {
+        g.strokeStyle = '#ee1111'; g.lineWidth = 8;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + 40, y); g.stroke();
+      } },
+  ];
+  g.font = '26px "Times New Roman", serif';
+  g.textBaseline = 'middle';
+  g.textAlign = 'left';
+  let lw = 0;
+  const widths = items.map(it => 40 + 14 + g.measureText(it.t).width);
+  const totalW = widths.reduce((a, b) => a + b, 0) + 40 * (items.length - 1) + 48;
+  let cx = pad.l + (iw - totalW) / 2;
+  g.strokeRect(cx, ly - 26, totalW, 52);
+  items.forEach((it, k) => {
+    it.draw(cx + 16, ly);
+    g.fillStyle = '#111';
+    g.fillText(it.t, cx + 16 + 54, ly);
+    cx += widths[k] + 40;
+  });
 
   // 右下角评价值
   if (d.value) {
-    g.fillStyle = '#1b5f98';
-    g.font = 'bold 13px "Microsoft YaHei"';
+    g.fillStyle = '#111';
+    g.font = 'bold 34px "Times New Roman", serif';
     g.textAlign = 'right';
-    g.fillText(d.value, W - pad.r, H - 4);
+    g.textBaseline = 'alphabetic';
+    g.fillText(d.value, W - pad.r, yBase + barZone + 42);
   }
 }
+
+/* 把画布转成 PNG blob（固定尺寸，2 倍清晰度已在画布本身） */
+function canvasToBlob(cv) {
+  return new Promise(res => cv.toBlob(b => res(b), 'image/png'));
+}
+
+$('#rpCopy').addEventListener('click', async () => {
+  const cv = $('#rpCanvas');
+  if (!rp.detail) return toast('先选一个测点', 2000);
+  try {
+    const blob = await canvasToBlob(cv);
+    if (!blob) throw new Error('生成图像失败');
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      toast('图像已复制，可直接粘贴到 Word', 2600);
+    } else {
+      throw new Error('浏览器不支持剪贴板图片');
+    }
+  } catch (e) {
+    toast('复制失败：' + e.message + '（可改用“存为 PNG”）', 4000);
+  }
+});
+
+$('#rpSavePng').addEventListener('click', async () => {
+  const cv = $('#rpCanvas');
+  if (!rp.detail) return toast('先选一个测点', 2000);
+  const blob = await canvasToBlob(cv);
+  if (!blob) return toast('生成图像失败', 2500);
+  const name = (rp.detail.item.name || 'NIC') + '_' +
+               (rp.detail.value || '') + '.png';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name.replace(/[\\/:*?"<>|]/g, '-');
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
 
 /* ---------- 清单编辑 ---------- */
 function collectItems() {
