@@ -2407,9 +2407,14 @@ function applyFormToItem() {
 
 async function refreshReport() {
   const c = await api('/api/report/compute');
-  rp.rows = c.rows || [];
+  const all = rp._allItems || [];
+  const rows = c.rows || [];
+  // 与 loadReport 保持一致：只保留本模块类型的行，否则下标会错位到另一种类型，
+  // 交叉表就会取到没有 bands 的行 → 整列显示 —
+  rp.rows = rows.filter((r, i) => ((all[i] || {}).kind || '隔声') === rp.kind);
   renderReportTable();
-  if (rp.cur >= 0) loadReportDetail(rp.cur);
+  if (rp.cur >= 0 && rp.cur < rp.items.length) loadReportDetail(rp.cur);
+  else if (rp.items.length) selectReportRow(0);
 }
 
 ['#rpName', '#rpTableNo', '#rpDesign', '#rpRoom', '#rpCond'].forEach(sel => {
@@ -2514,9 +2519,11 @@ async function moveReport(delta) {
   await postJSON('/api/report/plan', {
     items: all.map((it, i) => ({ ...it, order: i + 1 })),
   });
-  rp.cur = rp.items.indexOf(all[a]);
+  // loadReport 会把 rp.cur 重置为 -1，所以先记住目标行的文件，加载后再定位
+  const movedFile = all[a].file || all[a].inner;
   await loadReport();
-  if (rp.cur >= 0) selectReportRow(rp.cur);
+  const idx = rp.items.findIndex(x => (x.file || x.inner) === movedFile);
+  if (idx >= 0) selectReportRow(idx);
 }
 
 $('#rpUp').addEventListener('click', () => moveReport(-1));
