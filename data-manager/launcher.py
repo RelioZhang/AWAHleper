@@ -195,6 +195,9 @@ def main() -> int:
             pass
         return 0
 
+    # 打开窗口前刷新心跳基线与启动计时，避免"刚启动就被判定空闲"
+    core.touch()
+
     browser = open_app_window(url, args.browser)
 
     # 等待窗口关闭：界面每隔几秒发心跳，超过 20 秒没心跳就退出
