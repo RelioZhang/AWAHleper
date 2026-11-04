@@ -2042,6 +2042,9 @@ function renderNoiseTable() {
     const th = document.createElement('th');
     th.textContent = it.cond || `测点${k + 1}`;
     th.className = 'cond';
+    const g = rp.groups.find(x => x.f11 === (it.file || it.inner));
+    th.title = g ? `来源：${it.file || it.inner} · 组 ${g.gid} · ${g.date || ''} ${g.time || ''}`
+                 : (it.file || it.inner || '');
     tr2.appendChild(th);
   });
   thead.appendChild(tr2);
@@ -2063,6 +2066,7 @@ function renderNoiseTable() {
       td.dataset.col = k;
       td.dataset.band = bi;
       td.title = `${it.room || ''} ${it.cond || ''}　${fmtHz(hz)}Hz`;
+      td.addEventListener('click', () => selectReportRow(k));
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -2088,6 +2092,8 @@ function renderNoiseTable() {
           td.textContent = it.design || '/';
           td.className = 'num';
         }
+        td.style.cursor = 'pointer';
+        td.addEventListener('click', () => selectReportRow(k));
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
@@ -2125,8 +2131,27 @@ function selectReportRow(i) {
   });
   if (hitIn) $('#rpInner').value = hitIn.value;
 
+  updateReportSource(it);
   renderReportTable();
   if (rp.kind === '隔声') loadReportDetail(i);
+}
+
+/* 来源行：当前列来自哪个标记过的测量；未标记的红字提醒 */
+function updateReportSource(it) {
+  const el = $('#rpSource');
+  if (!el) return;
+  if (!it) { el.hidden = true; return; }
+  el.hidden = false;
+  const f = it.file || it.inner || '';
+  const g = rp.groups.find(x => x.f11 === f || x.f13 === f);
+  if (g && (g.tag || '') === rp.kind) {
+    el.innerHTML = `来源：<b>${f}</b> · 组 ${g.gid} · ${g.date || ''} ${g.time || ''}`
+                 + ` · 标记「${g.tag}」`;
+  } else if (f) {
+    el.innerHTML = `<span class="unset">⚠ ${f} 在数据整理中未标记为「${rp.kind}」，导出后无法追溯来源</span>`;
+  } else {
+    el.innerHTML = `<span class="unset">⚠ 未选择数据文件——请在下方「文件」里选择一个标记过的测量</span>`;
+  }
 }
 
 function clearReportDetail() {
@@ -2379,12 +2404,14 @@ $('#rpKind').addEventListener('change', async () => {
   });
 });
 
-/* 找一个还没被清单用到的文件，避免新行「未选择文件」 */
+/* 找一个「已打当前标记」且未被清单使用的文件。
+   未标记的数据不允许进报告——来源必须可追溯。 */
 function pickFreeFile(kind) {
   const used = new Set((rp._allItems || []).flatMap(x =>
     [x.file, x.inner, x.outer].filter(Boolean)));
   const want13 = kind !== '噪声级';
   const pool = rp.groups
+    .filter(g => (g.tag || '') === kind)
     .map(g => (want13 ? g.f13 : g.f11))
     .filter(f => f && !used.has(f));
   return pool[0] || '';
