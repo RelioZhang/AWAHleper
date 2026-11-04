@@ -2292,14 +2292,16 @@ function drawReportChart(d) {
   }
 
   // ---- 版面（与原图比例一致：上留白窄、下留图例） ----
-  // 版面按报告原图实测：图框 x=209~1300、y=55~740（0线 y=648），图例 y=917
+  // 版面：图框 x=209~1300。扣分柱在 0 线上方（与 NR 同向），图框底 = 0 线
   const pad = { l: 209, r: 100, t: 55, b: 0 };
   const iw = W - pad.l - pad.r;              // 1091
-  const barZone = 92;                        // 0 线到图框底（648→740）
-  const yBase = 648;                         // 0 dB 基线（实测）
+  const yBase = 740;                         // 0 dB 基线（= 图框底）
   const yTop = pad.t;                        // 55
-  const ih = yBase - yTop;                   // 0~vmax 的高度 = 593
-  const plotBottom = yBase + barZone;        // 740 图框底
+  const plotBottom = yBase;
+  const barZone = 92;                        // 柱最大高度（向上）
+  const ih = yBase - yTop - barZone;         // 刻度可用的高度（留出柱区）
+  // 纵轴 0 线到顶边总高（含柱区），用于 dB→y 映射
+  const fullH = yBase - yTop;
 
   const vals = [];
   d.bands.forEach(b => {
@@ -2317,8 +2319,7 @@ function drawReportChart(d) {
                      (Math.log10(fmax) - Math.log10(fmin)) * iw;
 
   // ---- 纵轴刻度（0~60，每 10 一格，每 5 一小格） ----
-  const yOf = v => yBase - (v / vmax) * (ih - 0);
-  const yTop2 = yBase - ih;
+  const yOf = v => yBase - (v / vmax) * fullH;
 
   // 绘图区背景
   g.fillStyle = '#fff';
@@ -2373,12 +2374,12 @@ function drawReportChart(d) {
   labels.forEach(hz => {
     let txt = hz >= 1000 ? (hz === 5000 ? '5k' : String(hz)) : String(hz);
     if (hz === 3150) txt = '3150';
-    g.fillText(txt, lx(hz), plotBottom + 18);
+    g.fillText(txt, lx(hz), plotBottom + 16);
   });
 
   // 轴标题
   g.font = '32px "Times New Roman", serif';
-  g.fillText('Frequency, Hz', pad.l + iw / 2, plotBottom + 90);
+  g.fillText('Frequency, Hz', pad.l + iw / 2, plotBottom + 88);
 
   g.save();
   g.translate(56, pad.t + ih / 2);
@@ -2401,12 +2402,12 @@ function drawReportChart(d) {
   bars.forEach(({ i, v }) => {
     if (i < 0) return;
     const x = lx(NIC_BANDS[i]);
-    const h = Math.min((v / 8) * barZone, barZone);   // 扣分最大 8dB 占满
+    const h = (v / 8) * barZone;            // 扣分最大 8dB 占满柱区
     g.fillStyle = '#fdfbe8';
     g.strokeStyle = '#333';
     g.lineWidth = 2;
     g.beginPath();
-    g.rect(x - bw / 2, yBase, bw, h);       // 向下生长
+    g.rect(x - bw / 2, yBase - h, bw, h);   // 向上生长（与 NR 同向）
     g.fill();
     g.stroke();
   });
