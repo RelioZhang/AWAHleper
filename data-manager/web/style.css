@@ -1352,3 +1352,24 @@ body.rp-noise .rp-tablewrap{flex:1 1 auto;overflow:auto;padding:8px 10px;}
   margin-left:8px;padding:1px 6px;border-radius:8px;
   background:#fdeee7;color:#a5522f;font-size:10.5px;font-weight:600;
 }
+
+/* ================= 报告图：学术样式 ================= */
+.rp-chart{padding:0 10px 8px;}
+.rp-chart-bar{
+  flex:0 0 28px;display:flex;align-items:center;gap:6px;
+  padding:0 2px;
+}
+.rp-chart-title{flex:1;font-size:11.5px;color:var(--text-3);}
+.rp-chart-bar .act{height:24px;padding:0 9px;font-size:11.5px;}
+/* 画布固定比例，缩放到容器宽度；复制出去保持原始 1400×1040 */
+.rp-canvas-wrap{
+  flex:1 1 auto;display:flex;align-items:center;justify-content:center;
+  overflow:auto;background:#f7fafd;border:1px solid var(--line-soft);
+  border-radius:3px;
+}
+#rpCanvas{
+  max-width:100%;max-height:100%;
+  width:auto;height:auto;
+  background:#fff;
+  display:block;
+}
