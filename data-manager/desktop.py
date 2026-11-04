@@ -51,7 +51,7 @@ except ImportError:                                    # pragma: no cover
 import server as core
 
 # 标题栏带版本号：一眼能看出手上跑的是不是最新的包
-APP_VERSION = "2.1.0"
+APP_VERSION = "3.0.0"
 
 
 # ============================================================ 调色板 ===
