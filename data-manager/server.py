@@ -32,12 +32,20 @@ import urllib.parse
 import webbrowser
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+try:
+    import report as report_core          # 报告生成内核（纯标准库）
+except ImportError:                        # pragma: no cover
+    report_core = None
 try:                                        # Python 标准库；精简版可能被裁掉
     from tkinter import Tk, filedialog
     HAS_TK = True
 except Exception:                           # noqa: BLE001
     Tk = filedialog = None
     HAS_TK = False
+
+APP_VERSION = "3.0.0"          # 全局版本号，界面与接口共用
+APP_VERSION_LABEL = "V3.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(HERE, "web")
@@ -312,6 +320,25 @@ class EditStore:
 
     def tags(self) -> dict:
         return dict(self.data.get("_tags") or {})
+
+
+def band_text(hz) -> str:
+    """频带显示文本：1000 -> 1k，12500 -> 12k5（与仪器导出写法一致）。"""
+    hz = int(hz)
+    if hz >= 1000:
+        k, r = divmod(hz, 1000)
+        return f"{k}k" if r == 0 else f"{k}k{r // 100}"
+    return str(hz)
+
+
+def _contour_at(nic, hz):
+    """NIC 评价轮廓在某个频带的值（无 report 模块时返回 None）。"""
+    if report_core is None or nic is None:
+        return None
+    try:
+        return report_core.nic_contour_at(int(nic), int(hz))
+    except Exception:                                  # noqa: BLE001
+        return None
 
 
 def band_label(key: str) -> str:
@@ -1222,7 +1249,7 @@ def build_export(cat: str, store: Store, keep: list[list[str]] | None = None,
 
 # ============================================================ HTTP 服务 ===
 class Handler(BaseHTTPRequestHandler):
-    server_version = "AWADataManager/1.0"
+    server_version = "AWADataManager/3.0"
     protocol_version = "HTTP/1.1"
     store: Store = None                                     # type: ignore
 
@@ -1264,6 +1291,23 @@ class Handler(BaseHTTPRequestHandler):
                                         body.get("value"))
                 return self._json(dict(ok=True, **res))
 
+            if u.path == "/api/report/plan":
+                # 保存整份清单
+                if report_core is None:
+                    return self._json(dict(ok=False, error="缺少 report.py"), 500)
+                self.store.ensure()
+                raw = body.get("items") or []
+                items = [report_core.Item.from_dict(d) for d in raw]
+                report_core.save_plan(self.store.dir, items)
+                return self._json(dict(ok=True, count=len(items)))
+
+            if u.path == "/api/report/export":
+                if report_core is None:
+                    return self._json(dict(ok=False, error="缺少 report.py"), 500)
+                self.store.ensure()
+                res = self._export_report(body)
+                return self._json(dict(ok=True, **res))
+
             if u.path == "/api/batch":
                 res = self.store.batch_update(
                     files=body.get("files") or [],
@@ -1283,12 +1327,141 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:                              # noqa: BLE001
             return self._json(dict(ok=False, error=f"{type(e).__name__}: {e}"), 500)
 
+    # ---------------- 报告：导出 ----------------
+    def _export_report(self, body: dict) -> dict:
+        """生成 xlsx（含曲线图）。返回文件列表供前端下载。"""
+        items = [report_core.Item.from_dict(d) for d in (body.get("items") or [])]
+        if not items:
+            items = report_core.load_plan(self.store.dir)
+        if not items:
+            raise ValueError("清单是空的，先添加测点")
+        meta = body.get("meta") or {}
+        results = report_core.compute_all(self.store, items)
+
+        out_dir = os.path.join(self.store.dir, "报告输出")
+        os.makedirs(out_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M")
+        name = (meta.get("project") or "报告").strip() or "报告"
+        safe = re.sub(r'[\\/:*?"<>|]', "-", name)
+        xlsx = os.path.join(out_dir, f"{safe}_{stamp}.xlsx")
+        report_core.write_xlsx(results, xlsx, meta=meta)
+
+        # 同时导出可下载副本的 URL 列表
+        rel = os.path.relpath(xlsx, self.store.dir).replace(os.sep, "/")
+        return dict(path=xlsx, name=os.path.basename(xlsx),
+                    url="/api/report/file?p=" + urllib.parse.quote(rel),
+                    rows=len(results),
+                    okCount=sum(1 for r in results if r.ok))
+
+    # ---------------- 报告：行数据与明细 ----------------
+    @staticmethod
+    def _report_row(item, r) -> dict:
+        """表格一行：清单字段 + 计算结果。"""
+        d = item.to_dict()
+        d.update(
+            value=r.value or "",
+            value_num=r.value_num,
+            nc=r.nc,
+            nic=r.nic,
+            ok=r.ok,
+            error=r.error,
+            passFlag=("" if r.pass_ is None else ("满足" if r.pass_ else "不满足")),
+            designNum=r.design_num,
+        )
+        return d
+
+    @staticmethod
+    def _report_detail(r) -> dict:
+        """右侧预览：频带表 + 曲线数据。"""
+        bands = []
+        if r.item.kind == "噪声级":
+            labels = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+            for hz, v in zip(labels, r.bands or []):
+                bands.append(dict(hz=hz, label=band_text(hz), value=v,
+                                  contour=None, deficit=None))
+        else:
+            hzs = [100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000,
+                   1250, 1600, 2000, 2500, 3150, 4000, 5000]
+            for i, hz in enumerate(hzs):
+                bands.append(dict(
+                    hz=hz, label=band_text(hz),
+                    value=(r.bands[i] if i < len(r.bands) else None),
+                    contour=_contour_at(r.nic, hz),
+                    deficit=(r.deficit[i] if i < len(r.deficit) else None)))
+        return dict(
+            kind=r.item.kind, item=r.item.to_dict(),
+            dataOk=r.ok, error=r.error,
+            value=r.value, nc=r.nc, nic=r.nic,
+            nrInstrument=r.nr_instrument,
+            passFlag=("" if r.pass_ is None else ("满足" if r.pass_ else "不满足")),
+            bands=bands,
+        )
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
         path = u.path
 
         try:
+            if path == "/api/report/file":
+                # 下载报告输出目录里的文件（限制在 报告输出/ 下，防越界）
+                rel = q.get("p", "")
+                base = os.path.abspath(os.path.join(self.store.dir, "报告输出"))
+                full = os.path.abspath(os.path.join(self.store.dir, rel))
+                if not full.startswith(base) or not os.path.isfile(full):
+                    raise ValueError("文件不存在")
+                with open(full, "rb") as f:
+                    data = f.read()
+                ctype = ("application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet" if full.endswith(".xlsx")
+                         else "application/octet-stream")
+                return self._send(data, ctype, 200, {
+                    "Content-Disposition":
+                        f"attachment; filename*=UTF-8''{urllib.parse.quote(os.path.basename(full))}"})
+
+            if path == "/api/report/plan":
+                if report_core is None:
+                    return self._json(dict(ok=False, error="缺少 report.py"), 500)
+                self.store.ensure()
+                items = report_core.load_plan(self.store.dir)
+                if not items and q.get("suggest") != "0":
+                    items = report_core.suggest_plan(self.store)
+                    if items:
+                        report_core.save_plan(self.store.dir, items)
+                return self._json(dict(
+                    ok=True,
+                    items=[it.to_dict() for it in items],
+                    groups=[dict(gid=g["gid"], label=f'{g["gid"]}　{g.get("point","")}',
+                                 f13=f"1_3_{g['gid']}.AWA",
+                                 f11=f"OCT_{g['gid']}.AWA")
+                            for g in self.store.groups()]))
+
+            if path == "/api/report/compute":
+                if report_core is None:
+                    return self._json(dict(ok=False, error="缺少 report.py"), 500)
+                self.store.ensure()
+                items = report_core.load_plan(self.store.dir)
+                results = report_core.compute_all(self.store, items)
+                return self._json(dict(ok=True, rows=[
+                    self._report_row(it, r) for it, r in zip(items, results)]))
+
+            if path == "/api/report/detail":
+                if report_core is None:
+                    return self._json(dict(ok=False, error="缺少 report.py"), 500)
+                self.store.ensure()
+                idx = int(q.get("i", "0"))
+                items = report_core.load_plan(self.store.dir)
+                if not (0 <= idx < len(items)):
+                    raise ValueError("测点不存在")
+                r = report_core.compute(self.store, items[idx])
+                return self._json(dict(ok=True, **self._report_detail(r)))
+
+            if path == "/api/ping":
+                # 界面定时心跳：窗口关闭后不再请求，启动器据此退出
+                touch()
+                return self._json(dict(ok=True, version=APP_VERSION,
+                                       dir=self.store.dir))
+
             if path == "/api/config":
                 cfg = load_config()
                 return self._json(dict(ok=True, dir=self.store.dir,
@@ -1384,6 +1557,77 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # ============================================================ 启动 ===
+def main(argv):
+    args = argv[1:]
+    port, root, open_browser = 8765, ROOT_DEFAULT, True
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--port" and i + 1 < len(args):
+            port = int(args[i + 1]); i += 2
+        elif a == "--dir" and i + 1 < len(args):
+            root = args[i + 1]; i += 2
+        elif a == "--no-browser":
+            open_browser = False; i += 1
+        else:
+            i += 1
+
+    store = Store(root)
+    # ============================================================ 启动器接口 ===
+# 供 launcher.py 使用：单独创建服务 + 关窗自动退出
+
+_LAST_TOUCH = [time.time()]
+
+
+def touch() -> None:
+    """界面心跳。每次 HTTP 请求都会刷新，用于判断窗口是否还开着。"""
+    _LAST_TOUCH[0] = time.time()
+
+
+def make_server(root: str, port: int, open_browser: bool = False):
+    """创建（不启动）一个绑定好 Store 的 HTTP 服务。"""
+    store = Store(root)
+    Handler.store = store
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd.store = store
+    return httpd
+
+
+def touch_forever(httpd, url: str, idle_seconds: int = 20) -> None:
+    """阻塞直到超过 idle_seconds 没有任何请求，然后关闭服务。
+
+    判断依据：页面每 3 秒轮询一次心跳接口；窗口一关，轮询停止。
+    """
+    # 启动阶段给足缓冲（浏览器冷启动可能慢）
+    started = time.time()
+    try:
+        while True:
+            time.sleep(0.5)
+            idle = time.time() - _LAST_TOUCH[0]
+            if idle > idle_seconds and time.time() - started > idle_seconds:
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # shutdown() 会等 serve_forever 的轮询结束（默认 0.5 秒一轮），
+        # 再用 daemon 线程兜底，避免关窗后进程滞留
+        def _kill():
+            try:
+                httpd.server_close()
+            except Exception:                              # noqa: BLE001
+                pass
+            os._exit(0)
+        threading.Timer(2.0, _kill).start()
+        try:
+            httpd.shutdown()
+        except Exception:                                  # noqa: BLE001
+            pass
+        try:
+            httpd.server_close()
+        except Exception:                                  # noqa: BLE001
+            pass
+
+
 def main(argv):
     args = argv[1:]
     port, root, open_browser = 8765, ROOT_DEFAULT, True
