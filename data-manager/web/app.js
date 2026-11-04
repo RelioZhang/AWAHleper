@@ -2379,13 +2379,28 @@ $('#rpKind').addEventListener('change', async () => {
   });
 });
 
+/* 找一个还没被清单用到的文件，避免新行「未选择文件」 */
+function pickFreeFile(kind) {
+  const used = new Set((rp._allItems || []).flatMap(x =>
+    [x.file, x.inner, x.outer].filter(Boolean)));
+  const want13 = kind !== '噪声级';
+  const pool = rp.groups
+    .map(g => (want13 ? g.f13 : g.f11))
+    .filter(f => f && !used.has(f));
+  return pool[0] || '';
+}
+
 $('#rpAdd').addEventListener('click', async () => {
   const all = rp._allItems || [];
+  const isNoise = rp.kind === '噪声级';
+  const f = pickFreeFile(rp.kind);
   all.push({
     name: '', kind: rp.kind, table: '', order: all.length + 1,
-    file: '', inner: '', outer: '', design: '',
+    file: isNoise ? f : '',
+    inner: isNoise ? f : '',
+    outer: '', design: '',
     room: ($('#rpRoom').value || '').trim(),
-    cond: '',
+    cond: ($('#rpCond').value || '').trim(),
   });
   rp._allItems = all;
   await postJSON('/api/report/plan', {
@@ -2407,18 +2422,19 @@ $('#rpDel').addEventListener('click', async () => {
 });
 
 $('#rpPair').addEventListener('click', async () => {
-  if (!confirm('按测量时序重新生成配对草稿？\n会覆盖当前清单。')) return;
-  rp.items = [];
+  if (!confirm('按标记与测量时序重新生成清单？\n会覆盖当前清单（含已填的房间/工况）。')) return;
   try {
-    const j = await api('/api/report/plan?suggest=1');
-    // 强制重建：先删空再让服务端重新建议
-    await postJSON('/api/report/plan', { items: [] });
-    const k = await api('/api/report/plan');
-    rp.items = k.items || [];
-    rp.groups = k.groups || rp.groups;
-    await saveReportPlan(true);
+    const j = await api('/api/report/plan?rebuild=1');
+    rp._allItems = j.items || [];
     await loadReport();
-    toast(`已生成 ${rp.items.length} 条配对草稿，请核对内侧/外侧`, 3000);
+    const mine = (rp._allItems || []).filter(x => x.kind === rp.kind);
+    if (!mine.length) {
+      toast(rp.kind === '噪声级'
+        ? '没有找到标为「噪声级」的数据。请到【数据整理】→ OCT 数据 里打标记'
+        : '没有找到标为「隔声」的数据。请到【数据整理】→ 1/3OCT 数据 里打标记', 4200);
+    } else {
+      toast(`已生成 ${mine.length} 条${rp.kind}草稿，请补填房间与工况`, 3200);
+    }
   } catch (e) {
     toast('生成失败：' + e.message, 3000);
   }
