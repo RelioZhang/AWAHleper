@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AWA 声学数据管理 V3.0</title>
-<link rel="stylesheet" href="/style.css?v=3.1.1">
+<link rel="stylesheet" href="/style.css?v=3.2.0">
 </head>
 <body>
 <div class="app">
@@ -145,6 +145,14 @@
       </svg>
       <span>数据导出</span>
     </button>
+    <button id="btnImport" class="act" title="导入编辑过的 xlsx（整理视图导出的格式）">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <path d="M8 7v8m0 0L5 12m3 3l3-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <path d="M2 5V2h12v3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      </svg>
+      <span>数据导入</span>
+    </button>
+    <input type="file" id="importFile" accept=".xlsx" hidden>
     <button id="btnOpen" class="act">
       <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
         <path d="M1.5 4.5A1 1 0 012.5 3.5h3l1 1.2h5.9a1 1 0 011 1v6.3a1 1 0 01-1 1h-10a1 1 0 01-1-1V4.5z"
@@ -336,6 +344,9 @@
         <button class="act" id="rpDel"><span>删除</span></button>
         <button class="act" id="rpPair"><span>按时序配对</span></button>
         <button class="act" id="rpSave"><span>保存</span></button>
+        <div class="ab-spacer"></div>
+        <button class="act" id="rpUp" title="上移（噪声级=整列左移，隔声=行上移）"><span>上移</span></button>
+        <button class="act" id="rpDown" title="下移"><span>下移</span></button>
       </div>
       <div class="rp-tablewrap">
         <!-- 噪声级：交叉表（倍频带为行，房间×工况为列），与报告表格一致 -->
@@ -505,6 +516,6 @@
   <div class="loading-text">正在读取数据…</div>
 </div>
 
-<script src="/app.js?v=3.1.1"></script>
+<script src="/app.js?v=3.2.0"></script>
 </body>
 </html>
