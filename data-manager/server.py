@@ -1332,7 +1332,7 @@ class Handler(BaseHTTPRequestHandler):
         """生成 xlsx（含曲线图）。返回文件列表供前端下载。"""
         items = [report_core.Item.from_dict(d) for d in (body.get("items") or [])]
         if not items:
-            items = report_core.load_plan(self.store.dir)
+            items = report_core.load_plan_checked(self.store)
         if not items:
             raise ValueError("清单是空的，先添加测点")
         meta = body.get("meta") or {}
@@ -1434,11 +1434,13 @@ class Handler(BaseHTTPRequestHandler):
                         items=[it.to_dict() for it in items],
                         groups=[dict(gid=g["gid"],
                                      label=f'{g["gid"]}　{g.get("point","")}',
+                                     date=g.get("date",""), time=g.get("time",""),
+                                     tag=self.store.edits.get_tag(g["gid"]),
                                      f13=f"1_3_{g['gid']}.AWA",
                                      f11=f"OCT_{g['gid']}.AWA")
                                 for g in self.store.groups()]))
 
-                items = report_core.load_plan(self.store.dir)
+                items = report_core.load_plan_checked(self.store)
                 if not items and q.get("suggest") != "0":
                     items = report_core.suggest_plan(self.store)
                     if items:
@@ -1447,6 +1449,8 @@ class Handler(BaseHTTPRequestHandler):
                     ok=True,
                     items=[it.to_dict() for it in items],
                     groups=[dict(gid=g["gid"], label=f'{g["gid"]}　{g.get("point","")}',
+                                 date=g.get("date",""), time=g.get("time",""),
+                                 tag=self.store.edits.get_tag(g["gid"]),
                                  f13=f"1_3_{g['gid']}.AWA",
                                  f11=f"OCT_{g['gid']}.AWA")
                             for g in self.store.groups()]))
@@ -1455,7 +1459,7 @@ class Handler(BaseHTTPRequestHandler):
                 if report_core is None:
                     return self._json(dict(ok=False, error="缺少 report.py"), 500)
                 self.store.ensure()
-                items = report_core.load_plan(self.store.dir)
+                items = report_core.load_plan_checked(self.store)
                 results = report_core.compute_all(self.store, items)
                 return self._json(dict(ok=True, rows=[
                     self._report_row(it, r) for it, r in zip(items, results)]))
@@ -1465,7 +1469,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(dict(ok=False, error="缺少 report.py"), 500)
                 self.store.ensure()
                 idx = int(q.get("i", "0"))
-                items = report_core.load_plan(self.store.dir)
+                items = report_core.load_plan_checked(self.store)
                 if not (0 <= idx < len(items)):
                     raise ValueError("测点不存在")
                 r = report_core.compute(self.store, items[idx])
