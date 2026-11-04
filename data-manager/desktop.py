@@ -429,12 +429,28 @@ class SpectrumCanvas(QWidget):
         p.setRenderHint(QPainter.Antialiasing, False)
         p.fillRect(self.rect(), QColor("#fff"))
 
+        kind = (self.rec or {}).get("kind", "")
+        if self.rec is None:
+            self._msg(p, "点击上方列表中的文件查看曲线")
+            return
+        if kind in ("1/3OCT", "OCT"):
+            self._paint_spectrum(p)
+        elif kind == "STA":
+            self._paint_stats(p)
+        elif kind == "NUM":
+            self._paint_dist(p)
+        else:
+            self._msg(p, f"该类型（{kind or '未知'}）暂无图形预览")
+
+    def _msg(self, p, text):
+        p.setPen(QColor(C.TEXT3))
+        p.drawText(self.rect(), Qt.AlignCenter, text)
+
+    def _paint_spectrum(self, p):
         area = self.rect().adjusted(58, 18, -18, -40)
         bands = self._bands()
-        if self.rec is None or not bands:
-            p.setPen(QColor(C.TEXT3))
-            p.drawText(self.rect(), Qt.AlignCenter,
-                       "点击上方列表中的文件查看曲线")
+        if not bands:
+            self._msg(p, "该文件没有频谱数据")
             return
 
         vals = []
@@ -444,8 +460,7 @@ class SpectrumCanvas(QWidget):
             m = self.rec["metrics"].get(key, {})
             vals += [v for v in m.values() if v is not None]
         if not vals:
-            p.setPen(QColor(C.TEXT3))
-            p.drawText(self.rect(), Qt.AlignCenter, "已隐藏全部曲线")
+            self._msg(p, "已隐藏全部曲线")
             return
 
         lo, hi, step = self._nice(min(vals), max(vals))
@@ -453,6 +468,116 @@ class SpectrumCanvas(QWidget):
         self._curves(p, area, lo, hi, bands)
         if self.hover:
             self._marker(p, area, lo, hi, bands)
+
+    # ---------- STA 统计柱状图 ----------
+    STA_KEYS = [("LeqT", "Leq,T"), ("Lmax", "Lmax"), ("Lmin", "Lmin"),
+                ("L 5", "L5"), ("L10", "L10"), ("L50", "L50"),
+                ("L90", "L90"), ("L95", "L95"), ("SEL", "SEL")]
+
+    def _stat_values(self):
+        st = next(iter(self.rec.get("stats", {}).values()), {})
+        return [(lbl, st.get(k)) for k, lbl in self.STA_KEYS if st.get(k) is not None]
+
+    def _paint_stats(self, p):
+        vals = self._stat_values()
+        if not vals:
+            self._msg(p, "该文件没有统计数据")
+            return
+        area = self.rect().adjusted(58, 18, -18, -40)
+        nums = [v for _, v in vals]
+        lo, hi, step = self._nice(min(nums), max(nums))
+        lo = min(lo, min(nums) - 2)
+        hi = max(hi, max(nums) + 2)
+
+        # 网格与 Y 轴
+        p.setPen(QPen(QColor("#eef3f8"), 1))
+        v = lo
+        while v <= hi + 1e-9:
+            y = area.bottom() - (v - lo) / (hi - lo) * area.height()
+            p.drawLine(area.left(), int(y), area.right(), int(y))
+            v += step
+        p.setPen(QColor(C.TEXT2))
+        p.setFont(QFont("Consolas", 8))
+        v = lo
+        while v <= hi + 1e-9:
+            y = area.bottom() - (v - lo) / (hi - lo) * area.height()
+            p.drawText(2, int(y) - 8, 52, 16, Qt.AlignRight | Qt.AlignVCenter, f"{v:.0f}")
+            v += step
+
+        # 柱子
+        n = len(vals)
+        bw = area.width() / max(n, 1)
+        color = QColor("#5b9bd5")
+        for i, (lbl, v) in enumerate(vals):
+            h = (v - lo) / (hi - lo) * area.height()
+            x = area.left() + i * bw + bw * 0.18
+            p.setBrush(QBrush(color))
+            p.setPen(Qt.NoPen)
+            p.drawRect(int(x), int(area.bottom() - h),
+                       max(int(bw * 0.64), 3), int(h))
+            # 数值
+            p.setPen(QColor(C.TEXT2))
+            p.setFont(QFont("Consolas", 7))
+            p.drawText(int(x) - 4, int(area.bottom() - h) - 13,
+                       int(bw), 12, Qt.AlignHCenter, f"{v:.1f}")
+            # 标签
+            p.setPen(QColor(C.TEXT3))
+            p.setFont(QFont("Microsoft YaHei UI", 7))
+            p.drawText(int(x) - 6, area.bottom() + 4, int(bw), 14,
+                       Qt.AlignHCenter | Qt.AlignTop, lbl)
+        p.setPen(QPen(QColor("#cfdbe6"), 1))
+        p.drawLine(area.left(), area.bottom(), area.right(), area.bottom())
+        p.drawLine(area.left(), area.top(), area.left(), area.bottom())
+
+    # ---------- NUM 声级分布曲线 ----------
+    def _paint_dist(self, p):
+        pts = [(lv, pc) for lv, pc in (self.rec.get("dist") or []) if pc and pc > 0]
+        if not pts:
+            self._msg(p, "该文件没有有效的声级分布数据")
+            return
+        area = self.rect().adjusted(58, 18, -18, -40)
+        lo, hi, step = self._nice(min(v for v, _ in pts), max(v for v, _ in pts))
+        ymax = max(v for _, v in pts)
+
+        # 网格
+        p.setPen(QPen(QColor("#eef3f8"), 1))
+        v = lo
+        while v <= hi + 1e-9:
+            x = area.left() + (v - lo) / (hi - lo) * area.width()
+            p.drawLine(int(x), area.top(), int(x), area.bottom())
+            v += step
+        p.setPen(QColor(C.TEXT2))
+        p.setFont(QFont("Consolas", 8))
+        v = lo
+        while v <= hi + 1e-9:
+            x = area.left() + (v - lo) / (hi - lo) * area.width()
+            p.drawText(int(x) - 20, area.bottom() + 4, 40, 14,
+                       Qt.AlignHCenter | Qt.AlignTop, f"{v:.0f}")
+            v += step
+        # Y 轴（占比 %）
+        p.drawText(2, area.top() - 4, 52, 14, Qt.AlignLeft, f"{ymax:.0f}%")
+
+        def xy(lv, pc):
+            x = area.left() + (lv - lo) / (hi - lo) * area.width()
+            y = area.bottom() - pc / ymax * area.height()
+            return x, y
+
+        p.setPen(QPen(QColor("#2b7fc4"), 1.6))
+        prev = None
+        for lv, pc in pts:
+            x, y = xy(lv, pc)
+            if prev:
+                p.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+            prev = (x, y)
+        p.setBrush(QBrush(QColor("#2b7fc4")))
+        p.setPen(Qt.NoPen)
+        for lv, pc in pts:
+            x, y = xy(lv, pc)
+            p.drawRect(int(x) - 1, int(y) - 1, 3, 3)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor("#cfdbe6"), 1))
+        p.drawLine(area.left(), area.bottom(), area.right(), area.bottom())
+        p.drawLine(area.left(), area.top(), area.left(), area.bottom())
 
     def _bands(self) -> list[str]:
         if not self.rec:
@@ -547,7 +672,7 @@ class SpectrumCanvas(QWidget):
 
     # ---------- 鼠标 ----------
     def mouseMoveEvent(self, ev):
-        if not self.rec:
+        if not self.rec or self.rec.get("kind") not in ("1/3OCT", "OCT"):
             return
         bands = self._bands()
         if not bands:
@@ -763,9 +888,9 @@ class MainWindow(QMainWindow):
         self.view.clicked.connect(self._on_cell_clicked)
         lay.addWidget(self.view, 3)
 
-        # 曲线工具行
-        bar = QWidget()
-        bl = QHBoxLayout(bar)
+        # 曲线工具行（仅频谱类型有意义，其他类型隐藏）
+        self.curvebar = QWidget()
+        bl = QHBoxLayout(self.curvebar)
         bl.setContentsMargins(10, 4, 10, 4)
         bl.setSpacing(10)
         bl.addWidget(QLabel("曲线"))
@@ -782,10 +907,10 @@ class MainWindow(QMainWindow):
         self.curve_title = QLabel("—")
         self.curve_title.setStyleSheet(f"color:{C.TEXT3};font-size:11.5px;")
         bl.addWidget(self.curve_title)
-        bar.setStyleSheet(
+        self.curvebar.setStyleSheet(
             f"background:{C.PANEL}; border-top:1px solid {C.LINE};"
             f"border-bottom:1px solid {C.LINE_SOFT};")
-        lay.addWidget(bar)
+        lay.addWidget(self.curvebar)
 
         self.canvas = SpectrumCanvas()
         lay.addWidget(self.canvas, 2)
@@ -872,11 +997,19 @@ class MainWindow(QMainWindow):
         self.modebar.style().polish(self.modebar)
 
     # ---------- 数据加载 ----------
-    def rescan(self) -> None:
+    def rescan(self, allow_pick: bool = True) -> None:
         try:
             info = self.store.scan(self.store.dir)
         except ValueError as e:
-            QMessageBox.critical(self, "读取失败", str(e))
+            # 目录无效时引导用户选择，而不是只报错
+            # （打包后首次启动极易遇到：配置在临时目录里找不到）
+            if allow_pick:
+                QMessageBox.warning(
+                    self, "需要选择数据目录",
+                    f"{e}\n\n现在选择本次测试数据所在的文件夹。")
+                self.choose_dir()
+            else:
+                QMessageBox.critical(self, "读取失败", str(e))
             return
         self.detail_cache.clear()
         self._fill_categories(info)
@@ -983,6 +1116,8 @@ class MainWindow(QMainWindow):
             if rec is None:
                 return
             self.detail_cache[name] = rec
+        # 曲线显示开关只对频谱类有意义；STA/NUM 有自己的图形
+        self.curvebar.setVisible(rec.get("kind") in ("1/3OCT", "OCT"))
         self.curve_title.setText(
             f"{name}　{rec.get('point', '')}　{rec.get('date', '')} {rec.get('time', '')}")
         self.canvas.set_record(rec)
