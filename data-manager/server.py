@@ -1559,6 +1559,7 @@ class Handler(BaseHTTPRequestHandler):
         d.update(
             value=r.value or "",
             value_num=r.value_num,
+            shift=getattr(r, "shift", 0) or 0,
             nc=r.nc,
             nic=r.nic,
             ok=r.ok,
@@ -1591,6 +1592,9 @@ class Handler(BaseHTTPRequestHandler):
                     deficit=(r.deficit[i] if i < len(r.deficit) else None)))
         return dict(
             kind=r.item.kind, item=r.item.to_dict(),
+            shift=getattr(r, "shift", 0) or 0,
+            rawBands=[None if v is None else round(v, 1)
+                      for v in (getattr(r, "raw_bands", None) or [])],
             dataOk=r.ok, error=r.error,
             value=r.value, nc=r.nc, nic=r.nic,
             nrInstrument=r.nr_instrument,
