@@ -2426,14 +2426,11 @@ function drawReportChart(d) {
       if (i < 0) return;
       pts.push({ x: lx(b.hz), y: yOf(b.contour), i });
     });
-    // 相邻点之间用水平-竖直阶梯连接（评价轮廓是阶梯形）
+    // 直接逐点连线：报告原图的轮廓是「斜线爬升 + 高频走平」，
+    // 不是逐带台阶。画台阶会多出十几个小弯折，与原图差异明显。
     pts.forEach((p, k) => {
       if (k === 0) g.moveTo(p.x, p.y);
-      else {
-        const prev = pts[k - 1];
-        g.lineTo(p.x, prev.y);       // 先水平
-        g.lineTo(p.x, p.y);          // 再竖直
-      }
+      else g.lineTo(p.x, p.y);
     });
     g.stroke();
   }
