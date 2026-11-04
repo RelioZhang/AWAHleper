@@ -202,7 +202,8 @@ class Item:
     """一个报告测点。kind=噪声级时只看 file；kind=隔声时看 inner/outer。"""
 
     def __init__(self, name="", kind=KIND_INSUL, table="", order=0,
-                 file="", inner="", outer="", design="", room="", cond=""):
+                 file="", inner="", outer="", design="", room="", cond="",
+                 shift=0.0):
         self.name = name
         self.kind = kind
         self.table = table          # 表号，如 3.2-1
@@ -213,12 +214,13 @@ class Item:
         self.design = design        # 设计值，如 NIC-28+ / NC-30
         self.room = room            # 噪声级：房间分组，如 0806 大床房
         self.cond = cond            # 噪声级：工况，如 FCU 低速
+        self.shift = shift          # 隔声：声压级差整体平移量（dB，消除干扰）
 
     def to_dict(self) -> dict:
         return dict(name=self.name, kind=self.kind, table=self.table,
                     order=self.order, file=self.file, inner=self.inner,
                     outer=self.outer, design=self.design, room=self.room,
-                    cond=self.cond)
+                    cond=self.cond, shift=self.shift)
 
     @staticmethod
     def from_dict(d: dict) -> "Item":
@@ -231,6 +233,10 @@ class Item:
             it.order = int(d.get("order", 0) or 0)
         except (TypeError, ValueError):
             it.order = 0
+        try:
+            it.shift = float(d.get("shift", 0) or 0)
+        except (TypeError, ValueError):
+            it.shift = 0.0
         return it
 
 
@@ -362,6 +368,8 @@ class Result:
         self.nic = None
         self.deficit: list = []
         self.pass_ = None           # True/False/None（没填设计值就是 None）
+        self.shift = 0.0            # 隔声：平移量
+        self.raw_bands: list = []   # 隔声：平移前的原始声压级差
 
     @property
     def value_num(self):
@@ -422,6 +430,12 @@ def compute(store, item: Item) -> Result:
         if nr is None:
             r.error = "两侧频带数据不完整，无法相减"
             return r
+        # 平移：现场存在背景噪声/侧向传声等干扰时，整条曲线上下平移还原隔声量
+        shift = float(item.shift or 0)
+        if shift:
+            nr = [round(v + shift, 1) for v in nr]
+        r.shift = shift
+        r.raw_bands = list(read_nr(store, item.inner, item.outer) or [])
         r.bands = nr
         r.nic = nic_of(nr)
         r.deficit = deficiencies(nr, r.nic)
