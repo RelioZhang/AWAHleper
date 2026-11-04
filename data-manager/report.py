@@ -202,7 +202,7 @@ class Item:
     """一个报告测点。kind=噪声级时只看 file；kind=隔声时看 inner/outer。"""
 
     def __init__(self, name="", kind=KIND_INSUL, table="", order=0,
-                 file="", inner="", outer="", design="", room=""):
+                 file="", inner="", outer="", design="", room="", cond=""):
         self.name = name
         self.kind = kind
         self.table = table          # 表号，如 3.2-1
@@ -211,18 +211,20 @@ class Item:
         self.inner = inner          # 隔声：内侧（声源侧）
         self.outer = outer          # 隔声：外侧（接收侧）
         self.design = design        # 设计值，如 NIC-28+ / NC-30
-        self.room = room
+        self.room = room            # 噪声级：房间分组，如 0806 大床房
+        self.cond = cond            # 噪声级：工况，如 FCU 低速
 
     def to_dict(self) -> dict:
         return dict(name=self.name, kind=self.kind, table=self.table,
                     order=self.order, file=self.file, inner=self.inner,
-                    outer=self.outer, design=self.design, room=self.room)
+                    outer=self.outer, design=self.design, room=self.room,
+                    cond=self.cond)
 
     @staticmethod
     def from_dict(d: dict) -> "Item":
         it = Item()
         for k in ("name", "kind", "table", "file", "inner", "outer",
-                  "design", "room"):
+                  "design", "room", "cond"):
             setattr(it, k, d.get(k, "") or "")
         it.kind = it.kind if it.kind in (KIND_NOISE, KIND_INSUL) else KIND_INSUL
         try:
@@ -456,25 +458,66 @@ def write_xlsx(results: list[Result], out_path: str,
         ws.cell(1, 1, "表 3.1-1 客房室内噪声级实测结果").font = TITLE_FONT
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n + 1)
 
-        ws.cell(2, 1, "倍频带 中心频率 (Hz)")
-        _style_cell(ws.cell(2, 1), HEAD_FONT, CENTER, HEAD_FILL)
-        for j, r in enumerate(noise, 2):
-            c = ws.cell(2, j, r.item.name)
-            _style_cell(c, HEAD_FONT, CENTER, HEAD_FILL)
-        ws.column_dimensions["A"].width = 20
-        for j in range(2, n + 2):
-            ws.column_dimensions[get_column_letter(j)].width = 13
-        ws.freeze_panes = "B3"
+        # 表头两行：房间（合并）+ 工况。
+        # 房间取 item.room，没填就退回 item.name；工况取 name 里冒号后半段或单独字段。
+        def room_of(r):
+            return (r.item.room or r.item.name or "").strip()
 
-        for i, hz in enumerate(BANDS_OCT, 3):
+        def cond_of(r):
+            c = (r.item.cond or "").strip()
+            if c:
+                return c
+            nm = (r.item.name or "").strip()
+            for sep in ("/", "-", "·", " "):
+                if sep in nm:
+                    tail = nm.split(sep)[-1].strip()
+                    if tail and tail != room_of(r):
+                        return tail
+            return ""
+
+        hz_col = 1
+        _style_cell(ws.cell(2, hz_col, "倍频带\n中心频率\n(Hz)"), HEAD_FONT, CENTER, HEAD_FILL)
+        ws.merge_cells(start_row=2, start_column=hz_col, end_row=3, end_column=hz_col)
+
+        col = 2
+        groups = []                      # [(room, start_col, count)]
+        for r in noise:
+            rm = room_of(r)
+            if groups and groups[-1][0] == rm:
+                groups[-1][2] += 1
+            else:
+                groups.append([rm, col, 1])
+            col += 1
+
+        for rm, start, cnt in groups:
+            if cnt > 1:
+                ws.merge_cells(start_row=2, start_column=start,
+                               end_row=2, end_column=start + cnt - 1)
+            _style_cell(ws.cell(2, start, rm), HEAD_FONT, CENTER, HEAD_FILL)
+            if cnt > 1:
+                for k in range(cnt):
+                    _style_cell(ws.cell(2, start + k), HEAD_FONT, CENTER, HEAD_FILL)
+
+        for j, r in enumerate(noise, 2):
+            label = cond_of(r) or f"测点{j - 1}"
+            _style_cell(ws.cell(3, j, label), HEAD_FONT, CENTER, HEAD_FILL)
+
+        ws.row_dimensions[2].height = 22
+        ws.row_dimensions[3].height = 22
+        ws.column_dimensions["A"].width = 16
+        for j in range(2, n + 2):
+            ws.column_dimensions[get_column_letter(j)].width = 11
+        ws.freeze_panes = "B4"
+
+        for i, hz in enumerate(BANDS_OCT, 4):
             _style_cell(ws.cell(i, 1, int(hz) if hz >= 1000 else hz))
             for j, r in enumerate(noise, 2):
-                v = r.bands[i - 3]
+                v = r.bands[i - 4]
                 c = ws.cell(i, j, round(v, 1))
                 _style_cell(c)
                 c.number_format = "0.0"
 
-        base = 3 + len(BANDS_OCT)
+        base = 4 + len(BANDS_OCT)
         for k, (label, getter) in enumerate((
                 ("NC（实测值）", lambda r: (fmt_rating(KIND_NOISE, r.nc)
                                             if r.nc is not None else "—")),
