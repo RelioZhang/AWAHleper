@@ -1329,3 +1329,26 @@ body.rp-noise .rp-tablewrap{flex:1 1 auto;overflow:auto;padding:8px 10px;}
 }
 .rp-source b{color:#1b5f98;}
 .rp-source .unset{color:#b2553a;}
+
+/* 声压级差平移控件 */
+.rp-shift{display:flex;align-items:center;gap:3px;flex:1;min-width:0;}
+.rp-shift input{
+  width:62px;height:26px;padding:0 4px;text-align:right;
+  border:1px solid #cfdce9;border-radius:3px;font-size:12px;
+  font-family:Consolas,monospace;outline:none;background:#fdfefe;
+}
+.rp-shift input:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(43,127,196,.12);}
+.rp-shift input.shifted{border-color:#c96a3a;background:#fff8f4;color:#a5522f;font-weight:700;}
+.rp-unit{font-size:11px;color:var(--text-3);}
+.rp-step{
+  width:24px;height:24px;padding:0;
+  border:1px solid #cfdce9;border-radius:3px;background:#fff;
+  color:#33506b;font-size:14px;line-height:1;cursor:pointer;
+}
+.rp-step:hover{border-color:#9dc3e3;background:#f2f8fd;color:var(--blue-deep);}
+.rp-step.reset{font-size:12px;color:#8a97a6;}
+
+.rp-shifttag{
+  margin-left:8px;padding:1px 6px;border-radius:8px;
+  background:#fdeee7;color:#a5522f;font-size:10.5px;font-weight:600;
+}
