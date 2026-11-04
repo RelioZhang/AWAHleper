@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AWA 声学数据管理 V3.0</title>
-<link rel="stylesheet" href="/style.css?v=3.3.0">
+<link rel="stylesheet" href="/style.css?v=3.4.0">
 </head>
 <body>
 <div class="app">
@@ -444,12 +444,22 @@
           </div>
         </div>
         <div class="rp-chart">
-          <div class="rp-chart-title" id="rpChartTitle">选择左侧测点查看曲线</div>
-          <canvas id="rpCanvas"></canvas>
-          <div class="rp-legend">
-            <span><i style="background:#c96a3a"></i>NIC 轮廓</span>
-            <span><i style="background:#2b7fc4"></i>NR 实测</span>
-            <span><i style="background:#f3d2c4"></i>扣分频带</span>
+          <div class="rp-chart-bar">
+            <span class="rp-chart-title" id="rpChartTitle">选择左侧测点查看曲线</span>
+            <button class="act" id="rpCopy" title="复制图像到剪贴板，可直接粘贴到 Word">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <rect x="5.5" y="5.5" width="8" height="9" rx="1.2" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                <path d="M3.5 10.5V3a1 1 0 011-1h6" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+              </svg>
+              <span>复制图像</span>
+            </button>
+            <button class="act" id="rpSavePng" title="另存为 PNG（2 倍图）">
+              <span>存为 PNG</span>
+            </button>
+          </div>
+          <!-- 画布尺寸固定，保证复制出去的比例与报告一致 -->
+          <div class="rp-canvas-wrap">
+            <canvas id="rpCanvas" width="1400" height="1040"></canvas>
           </div>
         </div>
       </div>
@@ -525,6 +535,6 @@
   <div class="loading-text">正在读取数据…</div>
 </div>
 
-<script src="/app.js?v=3.3.0"></script>
+<script src="/app.js?v=3.4.0"></script>
 </body>
 </html>
