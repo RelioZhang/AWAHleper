@@ -1670,11 +1670,11 @@ $('#tbl').addEventListener('dblclick', e => {
 $$('.mod').forEach(btn => {
   btn.addEventListener('click', () => {
     const mod = btn.dataset.mod;
-    if (mod === 'data' || mod === 'organize') {
+    if (mod === 'data' || mod === 'organize' || mod === 'report') {
       switchModule(mod);
       return;
     }
-    toast('该模块尚未开发，当前可用【数据管理】与【数据整理】');
+    toast('该模块尚未开发，当前可用【数据管理】【数据整理】【报告生成】');
   });
 });
 
